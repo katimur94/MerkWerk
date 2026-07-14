@@ -41,7 +41,7 @@ impl Default for SnapshotConfig {
 ///
 /// Gibt zurück, ob durch diesen Aufruf (neu) abgeschnitten wurde bzw. das Budget
 /// bereits vorher voll war.
-pub fn push_capped(buf: &mut String, add: &str, max_bytes: usize) -> bool {
+pub(crate) fn push_capped(buf: &mut String, add: &str, max_bytes: usize) -> bool {
     if buf.len() >= max_bytes {
         return true;
     }
@@ -63,7 +63,7 @@ pub fn push_capped(buf: &mut String, add: &str, max_bytes: usize) -> bool {
 /// denselben Knoten: `value` wird verworfen, wenn es exakt `name` entspricht
 /// (häufig bei einfachen Controls, deren Legacy-Value die Name-Eigenschaft
 /// spiegelt) — vermeidet den offensichtlichsten Duplikat-Fall an der Quelle.
-pub fn dedup_pair(name: Option<String>, value: Option<String>) -> Vec<String> {
+pub(crate) fn dedup_pair(name: Option<String>, value: Option<String>) -> Vec<String> {
     let mut out = Vec::with_capacity(2);
     if let Some(n) = name {
         out.push(n);
@@ -110,7 +110,10 @@ mod tests {
         let mut buf = String::new();
         assert!(!push_capped(&mut buf, "12345", 5));
         let truncated = push_capped(&mut buf, "more", 5);
-        assert_eq!(buf, "12345", "buffer must stay unchanged once budget is exhausted");
+        assert_eq!(
+            buf, "12345",
+            "buffer must stay unchanged once budget is exhausted"
+        );
         assert!(truncated);
     }
 
@@ -172,8 +175,14 @@ mod tests {
 
     #[test]
     fn dedup_pair_handles_missing_name_or_value() {
-        assert_eq!(dedup_pair(None, Some("v".to_string())), vec!["v".to_string()]);
-        assert_eq!(dedup_pair(Some("n".to_string()), None), vec!["n".to_string()]);
+        assert_eq!(
+            dedup_pair(None, Some("v".to_string())),
+            vec!["v".to_string()]
+        );
+        assert_eq!(
+            dedup_pair(Some("n".to_string()), None),
+            vec!["n".to_string()]
+        );
         assert!(dedup_pair(None, None).is_empty());
     }
 

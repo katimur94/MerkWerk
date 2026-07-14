@@ -53,7 +53,10 @@ pub fn window_info(hwnd: isize) -> Option<WindowInfo> {
 
     let process_name = process_name_for_pid(pid).unwrap_or_default();
 
-    Some(WindowInfo { process_name, title })
+    Some(WindowInfo {
+        process_name,
+        title,
+    })
 }
 
 /// Liest den Fenstertitel via `GetWindowTextW`. Liefert `""`, wenn das Fenster
@@ -104,7 +107,13 @@ fn full_image_file_name(hprocess: HANDLE) -> Option<String> {
     // höchstens `size` Einheiten und aktualisiert `size` auf die tatsächlich
     // geschriebene Länge (ohne NUL) bei Erfolg.
     unsafe {
-        QueryFullProcessImageNameW(hprocess, PROCESS_NAME_WIN32, PWSTR(buf.as_mut_ptr()), &mut size).ok()?;
+        QueryFullProcessImageNameW(
+            hprocess,
+            PROCESS_NAME_WIN32,
+            PWSTR(buf.as_mut_ptr()),
+            &mut size,
+        )
+        .ok()?;
     }
     let full_path = String::from_utf16_lossy(&buf[..size as usize]);
     file_name_from_path(&full_path)

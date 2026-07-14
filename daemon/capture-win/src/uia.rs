@@ -18,10 +18,13 @@
 
 use windows::core::Result as WinResult;
 use windows::Win32::Foundation::HWND;
-use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, COINIT_MULTITHREADED};
+use windows::Win32::System::Com::{
+    CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, COINIT_MULTITHREADED,
+};
 use windows::Win32::UI::Accessibility::{
-    CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationTreeWalker, IUIAutomationValuePattern,
-    UIA_ComboBoxControlTypeId, UIA_EditControlTypeId, UIA_ValuePatternId,
+    CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationTreeWalker,
+    IUIAutomationValuePattern, UIA_ComboBoxControlTypeId, UIA_EditControlTypeId,
+    UIA_ValuePatternId,
 };
 
 use crate::text_budget::{dedup_pair, push_capped};
@@ -76,7 +79,8 @@ impl UiaSnapshotter {
         // SAFETY: `CLSCTX_ALL` + die (korrekten, aus dem windows-crate stammenden)
         // CLSID/IID von `CUIAutomation`/`IUIAutomation`; Fehler (z. B. UIA-Dienst nicht
         // verfügbar) werden als `Err` durchgereicht, kein Absturz.
-        let automation: IUIAutomation = unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_ALL)? };
+        let automation: IUIAutomation =
+            unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_ALL)? };
         Ok(Self { automation })
     }
 
@@ -97,10 +101,16 @@ impl UiaSnapshotter {
         // oder leer sein können. Liefert außerdem den Prozessnamen "gratis" mit, den wir
         // für die Browser-Erkennung unten ohnehin brauchen — kein zweiter COM-Umweg nötig.
         let info = window::window_info(hwnd);
-        let window_title = info.as_ref().map(|i| i.title.clone()).filter(|t| !t.is_empty());
-        let is_browser = info.as_ref().is_some_and(|i| is_known_browser(&i.process_name));
+        let window_title = info
+            .as_ref()
+            .map(|i| i.title.clone())
+            .filter(|t| !t.is_empty());
+        let is_browser = info
+            .as_ref()
+            .is_some_and(|i| is_known_browser(&i.process_name));
 
-        let root: Option<IUIAutomationElement> = unsafe { self.automation.ElementFromHandle(win_handle) }.ok();
+        let root: Option<IUIAutomationElement> =
+            unsafe { self.automation.ElementFromHandle(win_handle) }.ok();
 
         let Some(root) = root else {
             // Root-Element nicht ermittelbar (z. B. Fenster inzwischen geschlossen) ->
@@ -113,7 +123,11 @@ impl UiaSnapshotter {
             };
         };
 
-        let url = if is_browser { self.find_browser_url(&root) } else { None };
+        let url = if is_browser {
+            self.find_browser_url(&root)
+        } else {
+            None
+        };
         let (text_content, truncated) = self.collect_text(&root, &cfg);
 
         Snapshot {
@@ -141,7 +155,11 @@ impl UiaSnapshotter {
     /// bewusst der `ControlViewWalker` verwendet: dort ist die Filterung auf echte
     /// Controls erwünscht (die Adressleiste ist immer ein Control) und hält die Suche
     /// kompakt.
-    fn collect_text(&self, root: &IUIAutomationElement, cfg: &SnapshotConfig) -> (Option<String>, bool) {
+    fn collect_text(
+        &self,
+        root: &IUIAutomationElement,
+        cfg: &SnapshotConfig,
+    ) -> (Option<String>, bool) {
         // SAFETY: reiner COM-Aufruf ohne Ausgabeparameter außer dem Rückgabewert.
         let Ok(walker) = (unsafe { self.automation.RawViewWalker() }) else {
             return (None, false);
@@ -157,7 +175,9 @@ impl UiaSnapshotter {
         let mut stack: Vec<(IUIAutomationElement, u32)> = vec![(root.clone(), 0)];
 
         while !truncated {
-            let Some((elem, depth)) = stack.pop() else { break };
+            let Some((elem, depth)) = stack.pop() else {
+                break;
+            };
 
             if node_count >= cfg.max_nodes {
                 truncated = true;
@@ -178,8 +198,10 @@ impl UiaSnapshotter {
                 if last_pushed.as_deref() == Some(candidate.as_str()) {
                     continue; // unmittelbare Wiederholung (z. B. Name == Value des Vorgängers)
                 }
-                let sep_truncated = !buf.is_empty() && push_capped(&mut buf, "\n", cfg.max_text_bytes);
-                let content_truncated = !sep_truncated && push_capped(&mut buf, &candidate, cfg.max_text_bytes);
+                let sep_truncated =
+                    !buf.is_empty() && push_capped(&mut buf, "\n", cfg.max_text_bytes);
+                let content_truncated =
+                    !sep_truncated && push_capped(&mut buf, &candidate, cfg.max_text_bytes);
                 last_pushed = Some(candidate);
                 if sep_truncated || content_truncated {
                     // --- Privacy-Invariante 2: Budget erreicht -> Walk stoppt sofort,
@@ -206,7 +228,8 @@ impl UiaSnapshotter {
     /// Abschnitt 5 (lokalisierte Chrome/Edge/Firefox-Muster), siehe [`looks_like_address_bar`].
     fn find_browser_url(&self, root: &IUIAutomationElement) -> Option<String> {
         // SAFETY: reiner COM-Aufruf ohne Ausgabeparameter außer dem Rückgabewert.
-        let walker: IUIAutomationTreeWalker = unsafe { self.automation.ControlViewWalker() }.ok()?;
+        let walker: IUIAutomationTreeWalker =
+            unsafe { self.automation.ControlViewWalker() }.ok()?;
 
         let mut stack: Vec<(IUIAutomationElement, u32)> = vec![(root.clone(), 0)];
         let mut visited = 0u32;
@@ -296,7 +319,9 @@ fn is_known_browser(process_name: &str) -> bool {
 /// pauschal alles verworfen wird.
 fn is_password(elem: &IUIAutomationElement) -> bool {
     // SAFETY: `elem` ist ein gültiges Element aus dem laufenden Walk.
-    unsafe { elem.CurrentIsPassword() }.map(|b| b.as_bool()).unwrap_or(false)
+    unsafe { elem.CurrentIsPassword() }
+        .map(|b| b.as_bool())
+        .unwrap_or(false)
 }
 
 /// `CurrentName()`, getrimmt; `None` bei COM-Fehler oder wenn nach dem Trimmen nichts
@@ -314,7 +339,9 @@ fn current_name(elem: &IUIAutomationElement) -> Option<String> {
 fn current_value(elem: &IUIAutomationElement) -> Option<String> {
     // SAFETY: `elem` ist ein gültiges Element aus dem laufenden Walk; `GetCurrentPatternAs`
     // liefert bei nicht unterstütztem Pattern einen COM-Fehler (kein UB), den `.ok()?` abfängt.
-    let pattern = unsafe { elem.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId) }.ok()?;
+    let pattern =
+        unsafe { elem.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId) }
+            .ok()?;
     // SAFETY: `pattern` stammt aus dem soeben erfolgreichen GetCurrentPatternAs-Aufruf.
     let bstr = unsafe { pattern.CurrentValue() }.ok()?;
     trimmed_or_none(&bstr.to_string())
@@ -349,5 +376,7 @@ fn looks_like_address_bar(elem: &IUIAutomationElement) -> bool {
     // "address" (EN/ES/FR-Fragmente über "adress*") und "adress" (DE "Adress[e/leiste]")
     // decken beide Schreibweisen ab; Firefox' kombinierte Such-/Adressleiste zusätzlich
     // über "search" + "google".
-    lower.contains("address") || lower.contains("adress") || (lower.contains("search") && lower.contains("google"))
+    lower.contains("address")
+        || lower.contains("adress")
+        || (lower.contains("search") && lower.contains("google"))
 }
