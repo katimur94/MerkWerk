@@ -25,6 +25,7 @@ pub enum Request {
     Pause,
     Resume,
     ReloadConfig,
+    DistillNow { from_ms: i64, to_ms: i64 },
 }
 
 /// Responses sent from the daemon back to a client.
@@ -92,6 +93,10 @@ mod tests {
             Request::Pause,
             Request::Resume,
             Request::ReloadConfig,
+            Request::DistillNow {
+                from_ms: 1000,
+                to_ms: 2000,
+            },
         ]
     }
 
@@ -166,6 +171,13 @@ mod tests {
         assert_eq!(
             decode_request(r#"{"cmd":"reload_config"}"#).unwrap(),
             Request::ReloadConfig
+        );
+        assert_eq!(
+            decode_request(r#"{"cmd":"distill_now","from_ms":1000,"to_ms":2000}"#).unwrap(),
+            Request::DistillNow {
+                from_ms: 1000,
+                to_ms: 2000
+            }
         );
     }
 
