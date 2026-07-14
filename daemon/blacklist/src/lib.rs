@@ -192,9 +192,19 @@ mod tests {
     #[test]
     fn empty_blacklist_blocks_nothing() {
         let bl = empty();
-        assert!(!bl.is_blocked("chrome.exe", Some("Meine Bank"), Some("https://x.bank.example/")));
+        assert!(!bl.is_blocked(
+            "chrome.exe",
+            Some("Meine Bank"),
+            Some("https://x.bank.example/")
+        ));
         assert!(!bl.is_blocked("anything.exe", None, None));
-        assert!(bl.reason("chrome.exe", Some("Meine Bank"), Some("https://x.bank.example/")).is_none());
+        assert!(bl
+            .reason(
+                "chrome.exe",
+                Some("Meine Bank"),
+                Some("https://x.bank.example/")
+            )
+            .is_none());
     }
 
     // ---- Prozessname ----
@@ -270,7 +280,11 @@ mod tests {
     #[test]
     fn url_glob_match_blocks() {
         let bl = Blacklist::new(vec![], vec![], vec!["*://*.bank.example/*".to_string()]);
-        assert!(bl.is_blocked("chrome.exe", None, Some("https://secure.bank.example/login")));
+        assert!(bl.is_blocked(
+            "chrome.exe",
+            None,
+            Some("https://secure.bank.example/login")
+        ));
     }
 
     #[test]
@@ -282,7 +296,11 @@ mod tests {
     #[test]
     fn url_glob_case_insensitive() {
         let bl = Blacklist::new(vec![], vec![], vec!["*://*.BANK.example/*".to_string()]);
-        assert!(bl.is_blocked("chrome.exe", None, Some("HTTPS://SECURE.bank.EXAMPLE/login")));
+        assert!(bl.is_blocked(
+            "chrome.exe",
+            None,
+            Some("HTTPS://SECURE.bank.EXAMPLE/login")
+        ));
     }
 
     // ---- Kombination / reason() ----
@@ -295,7 +313,11 @@ mod tests {
             vec!["*://*.bank.example/*".to_string()],
         );
         // Nur der Titel matcht, Prozess und URL nicht.
-        assert!(bl.is_blocked("firefox.exe", Some("Online-Bank"), Some("https://example.com/")));
+        assert!(bl.is_blocked(
+            "firefox.exe",
+            Some("Online-Bank"),
+            Some("https://example.com/")
+        ));
     }
 
     #[test]

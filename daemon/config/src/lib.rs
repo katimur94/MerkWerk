@@ -208,12 +208,10 @@ impl Config {
     /// propagiert.
     pub fn load(path: &Path) -> Result<Config> {
         match fs::read_to_string(path) {
-            Ok(raw) => {
-                toml::from_str(&raw).map_err(|source| ConfigError::Parse {
-                    path: path.to_path_buf(),
-                    source,
-                })
-            }
+            Ok(raw) => toml::from_str(&raw).map_err(|source| ConfigError::Parse {
+                path: path.to_path_buf(),
+                source,
+            }),
             Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
                 let config = Config::default();
                 config.save(path)?;
@@ -307,9 +305,18 @@ mod tests {
         let loaded = Config::load(&path).expect("load partial");
 
         assert_eq!(loaded.debounce.typing_pause_ms, 12345);
-        assert_eq!(loaded.debounce.click_cluster_ms, DebounceConfig::default().click_cluster_ms);
-        assert_eq!(loaded.debounce.scroll_end_ms, DebounceConfig::default().scroll_end_ms);
-        assert_eq!(loaded.debounce.min_focus_ms, DebounceConfig::default().min_focus_ms);
+        assert_eq!(
+            loaded.debounce.click_cluster_ms,
+            DebounceConfig::default().click_cluster_ms
+        );
+        assert_eq!(
+            loaded.debounce.scroll_end_ms,
+            DebounceConfig::default().scroll_end_ms
+        );
+        assert_eq!(
+            loaded.debounce.min_focus_ms,
+            DebounceConfig::default().min_focus_ms
+        );
 
         assert_eq!(loaded.db_path, Config::default_db_path());
         assert_eq!(loaded.blacklist, BlacklistConfig::default());

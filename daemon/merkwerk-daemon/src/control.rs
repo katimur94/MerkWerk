@@ -108,7 +108,9 @@ mod tests {
         assert!(matches!(s.handle(Request::Pause), Response::Ok));
         assert!(s.is_paused());
         match s.handle(Request::GetStatus) {
-            Response::Status { paused, running, .. } => {
+            Response::Status {
+                paused, running, ..
+            } => {
                 assert!(paused);
                 assert!(running);
             }

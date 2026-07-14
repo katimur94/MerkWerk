@@ -155,7 +155,10 @@ mod tests {
             decode_request(r#"{"cmd":"get_status"}"#).unwrap(),
             Request::GetStatus
         );
-        assert_eq!(decode_request(r#"{"cmd":"pause"}"#).unwrap(), Request::Pause);
+        assert_eq!(
+            decode_request(r#"{"cmd":"pause"}"#).unwrap(),
+            Request::Pause
+        );
         assert_eq!(
             decode_request(r#"{"cmd":"resume"}"#).unwrap(),
             Request::Resume
@@ -192,7 +195,10 @@ mod tests {
 
     #[test]
     fn encode_request_known_wire_format() {
-        assert_eq!(encode_request(&Request::GetStatus), "{\"cmd\":\"get_status\"}\n");
+        assert_eq!(
+            encode_request(&Request::GetStatus),
+            "{\"cmd\":\"get_status\"}\n"
+        );
     }
 
     #[test]

@@ -46,7 +46,9 @@ fn main() {
     let cfg = match config::Config::load(&config_path) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("[merkwerk-daemon] Konfig konnte nicht geladen werden ({config_path:?}): {e}");
+            eprintln!(
+                "[merkwerk-daemon] Konfig konnte nicht geladen werden ({config_path:?}): {e}"
+            );
             std::process::exit(1);
         }
     };

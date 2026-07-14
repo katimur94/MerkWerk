@@ -39,9 +39,7 @@ mod tests {
 
         // Writer (daemon) creates the DB and inserts a row.
         let writer = Store::open(&path).unwrap();
-        let sid = writer
-            .insert_app_session("code.exe", 1_000, None)
-            .unwrap();
+        let sid = writer.insert_app_session("code.exe", 1_000, None).unwrap();
         drop(writer);
 
         // Reader (app) sees the row read-only...
@@ -95,7 +93,14 @@ mod tests {
 
         let session_id = store.insert_app_session("code.exe", 0, None).unwrap();
         let event_id = store
-            .insert_event(Some(session_id), "typing_burst", 1_500, Some(2_300), None, None)
+            .insert_event(
+                Some(session_id),
+                "typing_burst",
+                1_500,
+                Some(2_300),
+                None,
+                None,
+            )
             .unwrap();
         assert!(event_id > 0);
 
@@ -241,16 +246,14 @@ mod tests {
 
         // A foreign key violation (bogus session_id) should make the whole
         // batch fail and commit nothing, since foreign_keys=ON.
-        let result = store.insert_batch(&[
-            BatchItem::Event {
-                session_id: Some(999_999),
-                kind: "idle",
-                ts_ms: 1,
-                duration_ms: None,
-                count: None,
-                expires_at: None,
-            },
-        ]);
+        let result = store.insert_batch(&[BatchItem::Event {
+            session_id: Some(999_999),
+            kind: "idle",
+            ts_ms: 1,
+            duration_ms: None,
+            count: None,
+            expires_at: None,
+        }]);
         assert!(result.is_err());
 
         let count: i64 = {

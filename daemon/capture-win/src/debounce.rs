@@ -75,7 +75,12 @@ pub struct Debouncer {
 
 impl Debouncer {
     /// Erzeugt einen Debouncer mit expliziten Schwellenwerten (in ms).
-    pub fn new(typing_pause_ms: u64, click_cluster_ms: u64, scroll_end_ms: u64, min_focus_ms: u64) -> Self {
+    pub fn new(
+        typing_pause_ms: u64,
+        click_cluster_ms: u64,
+        scroll_end_ms: u64,
+        min_focus_ms: u64,
+    ) -> Self {
         Self {
             typing_pause_ms,
             click_cluster_ms,
@@ -216,13 +221,19 @@ impl Debouncer {
                 // entprellt: kein FocusChange-Trigger, aber der interne
                 // Zustand wird trotzdem auf das neue Fenster gesetzt.
                 if prev.hwnd != hwnd {
-                    self.focus = Some(FocusState { hwnd, since_ms: ts_ms });
+                    self.focus = Some(FocusState {
+                        hwnd,
+                        since_ms: ts_ms,
+                    });
                 }
             }
             None => {
                 // Erster Fokus überhaupt: sofort melden.
                 out.push(Trigger::FocusChange { hwnd, ts_ms });
-                self.focus = Some(FocusState { hwnd, since_ms: ts_ms });
+                self.focus = Some(FocusState {
+                    hwnd,
+                    since_ms: ts_ms,
+                });
             }
         }
     }
@@ -276,7 +287,10 @@ impl Debouncer {
                 s.last_ms = ts_ms;
             }
             _ => {
-                self.scroll = Some(ScrollState { hwnd, last_ms: ts_ms });
+                self.scroll = Some(ScrollState {
+                    hwnd,
+                    last_ms: ts_ms,
+                });
             }
         }
     }
@@ -303,7 +317,13 @@ mod tests {
     fn first_focus_change_is_reported_immediately() {
         let mut d = Debouncer::with_defaults();
         let trig = d.feed(focus(1, 1_000));
-        assert_eq!(trig, vec![Trigger::FocusChange { hwnd: 1, ts_ms: 1_000 }]);
+        assert_eq!(
+            trig,
+            vec![Trigger::FocusChange {
+                hwnd: 1,
+                ts_ms: 1_000
+            }]
+        );
     }
 
     #[test]
@@ -409,7 +429,13 @@ mod tests {
         d.feed(scroll(300));
         assert!(d.tick(700).is_empty()); // 300 + 500 = 800
         let trig = d.tick(800);
-        assert_eq!(trig, vec![Trigger::ScrollEnd { hwnd: 1, ts_ms: 300 }]);
+        assert_eq!(
+            trig,
+            vec![Trigger::ScrollEnd {
+                hwnd: 1,
+                ts_ms: 300
+            }]
+        );
     }
 
     #[test]
@@ -430,7 +456,10 @@ mod tests {
                     key_count: 2,
                     duration_ms: 100,
                 },
-                Trigger::FocusChange { hwnd: 2, ts_ms: 1_000 },
+                Trigger::FocusChange {
+                    hwnd: 2,
+                    ts_ms: 1_000
+                },
             ]
         );
     }
@@ -446,9 +475,16 @@ mod tests {
         assert_eq!(
             trig,
             vec![
-                Trigger::ClickCluster { hwnd: 1, ts_ms: 50, click_count: 1 },
+                Trigger::ClickCluster {
+                    hwnd: 1,
+                    ts_ms: 50,
+                    click_count: 1
+                },
                 Trigger::ScrollEnd { hwnd: 1, ts_ms: 60 },
-                Trigger::FocusChange { hwnd: 2, ts_ms: 1_000 },
+                Trigger::FocusChange {
+                    hwnd: 2,
+                    ts_ms: 1_000
+                },
             ]
         );
     }
@@ -467,7 +503,13 @@ mod tests {
         // Danach zählt Fenster 2 als aktuell fokussiert; ein Wechsel nach
         // ausreichender Zeit muss wieder normal gemeldet werden.
         let trig2 = d.feed(focus(3, 500));
-        assert_eq!(trig2, vec![Trigger::FocusChange { hwnd: 3, ts_ms: 500 }]);
+        assert_eq!(
+            trig2,
+            vec![Trigger::FocusChange {
+                hwnd: 3,
+                ts_ms: 500
+            }]
+        );
     }
 
     #[test]
@@ -531,7 +573,10 @@ mod tests {
         let trig = d.feed(focus(2, DEFAULT_MIN_FOCUS_MS));
         assert_eq!(
             trig,
-            vec![Trigger::FocusChange { hwnd: 2, ts_ms: DEFAULT_MIN_FOCUS_MS }]
+            vec![Trigger::FocusChange {
+                hwnd: 2,
+                ts_ms: DEFAULT_MIN_FOCUS_MS
+            }]
         );
     }
 
@@ -545,7 +590,13 @@ mod tests {
         assert!(d.feed(focus(4, 120)).is_empty());
         // Danach bleibt Fenster 4 lange genug fokussiert -> normaler Trigger.
         let trig = d.feed(focus(5, 500));
-        assert_eq!(trig, vec![Trigger::FocusChange { hwnd: 5, ts_ms: 500 }]);
+        assert_eq!(
+            trig,
+            vec![Trigger::FocusChange {
+                hwnd: 5,
+                ts_ms: 500
+            }]
+        );
     }
 
     #[test]
@@ -578,7 +629,11 @@ mod tests {
         let trig = d.tick(2_000);
         assert_eq!(trig.len(), 3);
         assert!(trig.iter().any(|t| matches!(t, Trigger::ScrollEnd { .. })));
-        assert!(trig.iter().any(|t| matches!(t, Trigger::ClickCluster { .. })));
-        assert!(trig.iter().any(|t| matches!(t, Trigger::TypingSettled { .. })));
+        assert!(trig
+            .iter()
+            .any(|t| matches!(t, Trigger::ClickCluster { .. })));
+        assert!(trig
+            .iter()
+            .any(|t| matches!(t, Trigger::TypingSettled { .. })));
     }
 }

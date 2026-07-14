@@ -44,11 +44,11 @@ use crossbeam_channel::Sender;
 
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::Threading::GetCurrentThreadId;
-use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent};
+use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, DispatchMessageW, EVENT_SYSTEM_FOREGROUND, GetMessageW, HC_ACTION, HHOOK,
-    HOOKPROC, MSG, PostThreadMessageW, SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx,
-    WH_KEYBOARD_LL, WH_MOUSE_LL, WINDOWS_HOOK_ID, WINEVENT_OUTOFCONTEXT, WM_KEYDOWN,
+    CallNextHookEx, DispatchMessageW, GetMessageW, PostThreadMessageW, SetWindowsHookExW,
+    TranslateMessage, UnhookWindowsHookEx, EVENT_SYSTEM_FOREGROUND, HC_ACTION, HHOOK, HOOKPROC,
+    MSG, WH_KEYBOARD_LL, WH_MOUSE_LL, WINDOWS_HOOK_ID, WINEVENT_OUTOFCONTEXT, WM_KEYDOWN,
     WM_LBUTTONDOWN, WM_MOUSEWHEEL, WM_QUIT, WM_RBUTTONDOWN,
 };
 
@@ -117,7 +117,11 @@ unsafe extern "system" fn win_event_proc(
 /// gecastet oder dereferenziert. Nur `WM_KEYDOWN` erzeugt ein Signal, und
 /// zwar ausschließlich `RawSignal::KeyTick { ts_ms }` — kein Keycode, kein
 /// Zeichen. `WM_KEYUP` wird ignoriert.
-unsafe extern "system" fn keyboard_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+unsafe extern "system" fn keyboard_hook_proc(
+    ncode: i32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
     if ncode == HC_ACTION as i32 && wparam.0 as u32 == WM_KEYDOWN {
         send_signal(RawSignal::KeyTick { ts_ms: now_ms() });
     }
@@ -185,7 +189,9 @@ fn run_hook_thread(tx: Sender<RawSignal>, ready_tx: Sender<u32>) {
         )
     };
     if win_event_hook.is_invalid() {
-        eprintln!("merkwerk-capture: SetWinEventHook (Fokuswechsel) konnte nicht installiert werden");
+        eprintln!(
+            "merkwerk-capture: SetWinEventHook (Fokuswechsel) konnte nicht installiert werden"
+        );
     }
 
     let keyboard_hook = install_ll_hook(WH_KEYBOARD_LL, Some(keyboard_hook_proc), "WH_KEYBOARD_LL");
