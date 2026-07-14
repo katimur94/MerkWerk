@@ -4,6 +4,7 @@ members = [
     "blacklist",
     "config",
     "ipc-protocol",
+    "inference",
     "capture-win",
     "merkwerk-daemon",
 ]
