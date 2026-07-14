@@ -1,0 +1,12 @@
+[package]
+name = "distiller"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+
+[dependencies]
+storage = { path = "../storage" }
+inference = { path = "../inference" }
+serde = { version = "1.0.228", features = ["derive"] }
+thiserror = "2.0.18"
