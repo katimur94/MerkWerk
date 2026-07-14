@@ -1,4 +1,4 @@
-//! MerkWerk app shell — Tauri 2 backend (Etappe 0).
+//! MerkWerk app shell — Tauri 2 backend.
 //!
 //! Per `ARCHITEKTUR.md`, `merkwerk-app` only ever *reads* the daemon's
 //! SQLite database (read-only) and *controls* the daemon over the Named
@@ -12,19 +12,21 @@
 //! exactly one tray icon and its "Start/Pause"/"Status"/"Beenden" items can
 //! carry real event handlers (JSON tray config can't express that).
 //!
-//! Every command here is a typed placeholder for Etappe 0: they compile and
-//! return well-shaped (but fake) data, and each is marked with a `TODO` for
-//! the real implementation that a later task wires up.
-
-use std::sync::Mutex;
+//! `get_daemon_status`/`pause_daemon`/`resume_daemon` below and the tray's
+//! "Start/Pause" item all go over the same real IPC round-trip
+//! (`ipc_client::ipc_request`, see there) — there is no locally cached
+//! daemon state in this process anymore; every poll/toggle asks the daemon
+//! itself over `\\.\pipe\merkwerk`, so the frontend and the tray can never
+//! disagree with the daemon's actual state.
 
 use serde::Serialize;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
-    Manager, State,
+    Manager,
 };
 
+mod ipc_client;
 mod notes;
 mod paths;
 mod search;
@@ -32,22 +34,12 @@ mod semantic;
 mod settings;
 mod timeline;
 
-/// Placeholder in-process stand-in for the daemon's real run state.
-///
-/// Once IPC is wired up this goes away: `get_daemon_status`/`pause_daemon`/
-/// `resume_daemon` will ask the daemon itself (over `\\.\pipe\merkwerk`)
-/// instead of reading/writing a local flag. Until then, this is the single
-/// shared source of truth for both the tray menu and the frontend, so they
-/// can't disagree with each other.
-#[derive(Default)]
-struct DaemonState {
-    paused: Mutex<bool>,
-}
-
 /// Mirrors `ipc_protocol::Response::Status` (see
-/// `daemon/ipc-protocol/src/lib.rs`) — the shape the real `get_status` IPC
-/// reply will eventually fill in.
-#[derive(Debug, Clone, Serialize)]
+/// `daemon/ipc-protocol/src/lib.rs`) — the shape `get_daemon_status` fills
+/// from the real IPC reply below. `Default` deliberately produces the
+/// "offline" reading (nothing running, nothing paused, all counters at
+/// zero), which doubles as the fallback value on any IPC error.
+#[derive(Debug, Clone, Default, Serialize)]
 struct DaemonStatus {
     running: bool,
     paused: bool,
@@ -56,45 +48,71 @@ struct DaemonStatus {
     uptime_secs: u64,
 }
 
-/// Read the daemon's current status.
+/// Read the daemon's current status via IPC (`Request::GetStatus`).
 ///
-/// TODO: IPC an \\.\pipe\merkwerk — `Request::GetStatus` senden (siehe
-/// `daemon/ipc-protocol`) und die echte `Response::Status` zurückgeben,
-/// statt den lokal mitgeführten Platzhalter-Zustand.
+/// Returns `DaemonStatus` rather than a `Result`: if the daemon isn't
+/// reachable (pipe missing because the daemon isn't running) or answers
+/// with anything other than `Response::Status`, this deliberately returns
+/// `DaemonStatus::default()` (`running: false`, everything else `0`)
+/// instead of an `Err`. The frontend polls this every few seconds — turning
+/// "daemon offline" into an error would make every poll tick while the
+/// daemon isn't running look like a failure, when it's simply the normal
+/// "not running yet" state the status bar needs to render.
 #[tauri::command]
-fn get_daemon_status(state: State<'_, DaemonState>) -> DaemonStatus {
-    let paused = *state.paused.lock().expect("daemon state mutex poisoned");
-    DaemonStatus {
-        running: false,
-        paused,
-        events_captured: 0,
-        snapshots_captured: 0,
-        uptime_secs: 0,
+fn get_daemon_status() -> DaemonStatus {
+    match ipc_client::ipc_request(&ipc_protocol::Request::GetStatus) {
+        Ok(ipc_protocol::Response::Status {
+            running,
+            paused,
+            events_captured,
+            snapshots_captured,
+            uptime_secs,
+        }) => DaemonStatus {
+            running,
+            paused,
+            events_captured,
+            snapshots_captured,
+            uptime_secs,
+        },
+        Ok(_) | Err(_) => DaemonStatus::default(),
     }
 }
 
-/// Ask the daemon to pause capturing.
+/// Ask the daemon to pause capturing via IPC (`Request::Pause`).
 ///
-/// TODO: IPC an \\.\pipe\merkwerk — `Request::Pause` senden.
+/// Unlike `get_daemon_status`, this *does* surface failures: a Pause click
+/// that silently did nothing (daemon unreachable) must be visible to the
+/// caller, which re-fetches the status right after — see
+/// `StatusBar.tsx`/the tray's `toggle_pause` handler below.
 #[tauri::command]
-fn pause_daemon(state: State<'_, DaemonState>) -> Result<(), String> {
-    *state.paused.lock().expect("daemon state mutex poisoned") = true;
-    Ok(())
+fn pause_daemon() -> Result<(), String> {
+    expect_ok(ipc_client::ipc_request(&ipc_protocol::Request::Pause)?)
 }
 
-/// Ask the daemon to resume capturing.
-///
-/// TODO: IPC an \\.\pipe\merkwerk — `Request::Resume` senden.
+/// Ask the daemon to resume capturing via IPC (`Request::Resume`).
 #[tauri::command]
-fn resume_daemon(state: State<'_, DaemonState>) -> Result<(), String> {
-    *state.paused.lock().expect("daemon state mutex poisoned") = false;
-    Ok(())
+fn resume_daemon() -> Result<(), String> {
+    expect_ok(ipc_client::ipc_request(&ipc_protocol::Request::Resume)?)
+}
+
+/// Turns an IPC `Response` for a Pause/Resume request into `Result<(), String>`:
+/// `Ok` succeeds, `Error { message }` surfaces that message, and a
+/// `Status { .. }` reply (never sent for these two requests, see
+/// `daemon/merkwerk-daemon/src/control.rs::Shared::handle`) is treated as a
+/// protocol mismatch rather than silently accepted.
+fn expect_ok(response: ipc_protocol::Response) -> Result<(), String> {
+    match response {
+        ipc_protocol::Response::Ok => Ok(()),
+        ipc_protocol::Response::Error { message } => Err(message),
+        ipc_protocol::Response::Status { .. } => {
+            Err("Unerwartete Antwort vom Daemon (Status statt Ok/Error)".to_string())
+        }
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .manage(DaemonState::default())
         .setup(|app| {
             let toggle_pause =
                 MenuItem::with_id(app, "toggle_pause", "Start/Pause", true, None::<&str>)?;
@@ -112,18 +130,32 @@ pub fn run() {
                 .show_menu_on_left_click(true)
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "toggle_pause" => {
-                        // TODO: IPC an \\.\pipe\merkwerk (Pause bzw. Resume,
-                        // je nach aktuellem Zustand) — siehe pause_daemon /
-                        // resume_daemon oben.
-                        let state = app.state::<DaemonState>();
-                        let mut paused =
-                            state.paused.lock().expect("daemon state mutex poisoned");
-                        *paused = !*paused;
+                        // Aktuellen Zustand per IPC erfragen und je nachdem
+                        // Pause oder Resume schicken — kein lokal
+                        // mitgeführtes Flag mehr, das vom echten
+                        // Daemon-Zustand abweichen könnte. Ist der Daemon
+                        // nicht erreichbar, meldet get_daemon_status()
+                        // `running: false, paused: false`, der Handler
+                        // versucht dann `pause_daemon()`, was ebenfalls
+                        // fehlschlägt; der Fehler wird geloggt statt das
+                        // Menüevent abstürzen zu lassen.
+                        let status = get_daemon_status();
+                        let result = if status.paused {
+                            resume_daemon()
+                        } else {
+                            pause_daemon()
+                        };
+                        if let Err(err) = result {
+                            eprintln!("toggle_pause: IPC an den Daemon fehlgeschlagen: {err}");
+                        }
                     }
                     "status" => {
-                        // TODO: get_daemon_status() abfragen und im Fenster
-                        // anzeigen. Für jetzt: Hauptfenster in den
-                        // Vordergrund holen.
+                        // Der Live-Status (Running/Paused, Zähler, Laufzeit)
+                        // wird bereits in der App-Statusleiste angezeigt
+                        // (StatusBar.tsx, pollt get_daemon_status()) — dieser
+                        // Menüeintrag muss ihn also nicht zusätzlich selbst
+                        // abfragen, sondern holt nur das Hauptfenster nach
+                        // vorne, damit die Statusleiste sichtbar wird.
                         if let Some(window) = app.get_webview_window("main") {
                             let _ = window.show();
                             let _ = window.set_focus();
