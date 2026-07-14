@@ -163,6 +163,8 @@ getestet) und einem Windows-Erfassungs-Crate hinter `#[cfg(windows)]` (D6):
   blacklist/                Filter-Engine (globset)
   config/                   TOML-Konfig (serde)
   ipc-protocol/             Request/Response-Wire-Format (JSONL)
+  inference/                Inference-Trait + Ollama-Backend (D9)
+  distiller/                Sessions+Snapshots -> Markdown (Prompt/Kontext/distill)
   capture-win/              Windows-Erfassung + geteilte Typen
     src/lib.rs                RawSignal (KEIN Keycode-Feld, D3), Trigger, Snapshot
     src/debounce.rs           Debouncer (plattformneutral, nativ getestet)
@@ -175,7 +177,8 @@ getestet) und einem Windows-Erfassungs-Crate hinter `#[cfg(windows)]` (D6):
     src/main.rs               Pfade (%APPDATA%\MerkWerk), Konfig, Start
     src/control.rs            geteilter Status/Steuerzustand, IPC-Semantik (getestet)
     src/policy.rs             Persistenz-Entscheidung/Blacklist an der Quelle (getestet)
-    src/runtime.rs #[cfg]      Threads + Erfassungs-Loop + Lebenszyklus
+    src/distill_job.rs        Destillat erzeugen + Vault-Datei schreiben (getestet)
+    src/runtime.rs #[cfg]      Threads (Hook/UIA/IPC/Destill) + Erfassungs-Loop
     src/ipc_server.rs #[cfg]   Named-Pipe-Server
 /app                        Tauri 2 + React + TS + Vite
   src/components/            TimelineView, SettingsView
@@ -185,12 +188,20 @@ getestet) und einem Windows-Erfassungs-Crate hinter `#[cfg(windows)]` (D6):
 /scripts                    ci-check.sh, longrun.ps1
 ```
 
-## Status & Nachweise (Etappe 0)
+## Status & Nachweise (Etappen 0–3)
 
-- **Build:** `cargo check/clippy --workspace --target x86_64-pc-windows-gnu` grün;
-  App-Frontend (`npm run build`) und `src-tauri` (windows-Cross-Check) grün.
-  Nativer Test-Lauf (Linux-Sandbox): storage 13, blacklist 20, config 4,
-  ipc-protocol 11, capture-win 32, merkwerk-daemon 10 — alle grün.
+Seit Etappe 0 kamen hinzu: FTS5-Volltextsuche + Retention-Löschjob (E1), die
+Crates `inference` (Ollama-Backend hinter `Inference`-Trait, D9) und `distiller`
+(Sessions+Snapshots → Markdown), der Notiz-Vault + `notes`-Tabelle (D10), die
+Destillier-Pipeline (Worker-Thread mit read-only-DB + Ollama, IPC `DistillNow`),
+BLOB-Embeddings + Brute-Force-Cosinus für semantische Suche (D11), und die
+App-Politur (Navigation, Live-Status per IPC-Round-Trip, CSS).
+
+- **Build:** `cargo clippy --workspace --target x86_64-pc-windows-gnu -- -D warnings`
+  grün; App-Frontend (`npm run build`) und `src-tauri` (windows-Cross-Check) grün;
+  `cargo build --release --target x86_64-pc-windows-gnu` erzeugt `merkwerk-daemon.exe`.
+  Nativer Test-Lauf (Linux-Sandbox): **169 Tests** grün (storage, blacklist,
+  config, ipc-protocol, capture-win, inference, distiller, merkwerk-daemon).
 - **Kein Roh-Tastenanschlag:** durch den Typ `RawSignal` erzwungen (kein
   Keycode-Feld); im Keyboard-Callback wird `KBDLLHOOKSTRUCT` nie dereferenziert
   (per grep-Review bestätigt: alle Vorkommen nur in Doku-Kommentaren).

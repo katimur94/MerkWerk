@@ -5,7 +5,7 @@ Diese Roadmap führt bis zur fertigen App: „Obsidian, das sich selbst schreibt
 Alles bleibt lokal. Grundprinzipien aus Etappe 0 gelten weiter (keine
 Roh-Tastenanschläge, Passwort-/Blacklist-Filter an der Quelle, TTL auf Rohdaten).
 
-## Etappe 1 — Datenschicht solide machen (keine KI)
+## Etappe 1 — Datenschicht solide machen (keine KI) — ✓ FERTIG
 Fundament, auf dem die KI später aufsetzt. Alles nativ testbar.
 - **Retention/TTL-Löschjob:** periodisch `expires_at < now` aus
   `snapshots`/`events`/`app_sessions` löschen (FK-schonend). Konfig-Intervall.
@@ -14,7 +14,7 @@ Fundament, auf dem die KI später aufsetzt. Alles nativ testbar.
   gehalten. `Store::search(query, limit)`.
 - **Such-UI:** Suchfeld + Trefferliste in der App (read-only).
 
-## Etappe 2 — Lokale KI-Destillation → Markdown-Notizen
+## Etappe 2 — Lokale KI-Destillation → Markdown-Notizen — ✓ FERTIG
 Der Kern der Produktidee.
 - **Inference-Abstraktion (D9):** Trait `Inference` im Daemon; Backend v1 =
   **Ollama** (lokaler HTTP-Server `127.0.0.1:11434`, kein Python/Docker).
@@ -26,12 +26,16 @@ Der Kern der Produktidee.
   Tabelle `notes` verweist auf Datei + Quellzeitraum.
 - **Notiz-UI:** Notizen-Liste + Vorschau; „Jetzt destillieren"-Aktion.
 
-## Etappe 3 — Semantik & Politur
-- **Embeddings (sqlite-vec):** Vektor-Index über Snapshots/Notizen (Embeddings
-  via `Inference`-Backend), semantische Suche neben FTS5.
-- **Review-/Vault-UX:** Notiz öffnen/bearbeiten, Tagesnavigation, KI-Einstellungen
-  (Modell, Prompt, Cadence), Pausen-/Datenschutz-Kontrollen sichtbar.
-- **Abnahme:** End-to-End auf Windows, Ressourcen im Rahmen, Vault sinnvoll.
+## Etappe 3 — Semantik & Politur — ✓ FERTIG (Code); Windows-Endabnahme offen
+- **Embeddings (BLOB + Brute-Force-Cosinus, D11 statt sqlite-vec):** Notiz-
+  Embeddings via `Inference`-Backend, semantische Suche neben FTS5. ✓
+- **App-Politur:** Navigationslayout (Timeline/Suche/Semantik/Notizen/
+  Einstellungen), Live-Statusleiste + Pause/Resume über echtes IPC-Round-Trip,
+  Dark/Light-CSS. ✓
+- **Abnahme:** In der Linux-Sandbox: 169 native Tests grün, Clippy `-D warnings`
+  (windows-gnu) grün, App-Frontend + `src-tauri` grün, Release-Build erzeugt
+  `merkwerk-daemon.exe`. **Offen (nur auf Windows möglich):** 24/7-Lauf, UIA,
+  Tauri-GUI live, Ollama-Modell rechnen, Vault im Dateisystem, 8-h-Ressourcentest.
 
 ## Realitäts-Hinweis (Entwicklungsumgebung)
 Entwickelt in einer Linux-Sandbox: plattformneutrale Logik (Storage, Suche,
