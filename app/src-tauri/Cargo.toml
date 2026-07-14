@@ -26,6 +26,7 @@ serde_json = "1"
 # declares its own empty [workspace] below and is not a member of the daemon one.
 storage = { path = "../../daemon/storage" }
 config = { path = "../../daemon/config" }
+ipc-protocol = { path = "../../daemon/ipc-protocol" }
 
 [target.'cfg(windows)'.dependencies]
 # Autostart toggle writes the HKCU Run key (delayed 30 s handled in the daemon).
