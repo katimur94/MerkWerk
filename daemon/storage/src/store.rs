@@ -10,7 +10,8 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::migrations::migrate;
-use crate::model::{AppSessionRow, EventRow, NoteRow, SearchHit, SnapshotRow};
+use crate::model::{AppSessionRow, EventRow, NoteRow, SearchHit, SemanticHit, SnapshotRow};
+use crate::vector::{cosine_similarity, decode_vector, encode_vector};
 
 /// Escape `raw` into a double-quoted FTS5 phrase literal, so arbitrary user
 /// input can never be parsed as FTS5 query syntax (column filters like
@@ -516,5 +517,68 @@ impl Store {
             )
             .optional()?;
         Ok(note)
+    }
+
+    /// Insert or replace the embedding vector for `note_id` (`note_embeddings`,
+    /// migration v4).
+    ///
+    /// `vector` is persisted as its length (`dim`) plus the little-endian
+    /// `f32` BLOB produced by [`encode_vector`]. Uses `INSERT OR REPLACE`
+    /// keyed on `note_id` (the table's primary key), so re-embedding a note
+    /// — calling this again for a `note_id` that already has a row —
+    /// overwrites the previous embedding in place instead of leaving a
+    /// stale duplicate.
+    pub fn upsert_note_embedding(&self, note_id: i64, vector: &[f32]) -> Result<()> {
+        let dim = vector.len() as i64;
+        let blob = encode_vector(vector);
+        self.conn.execute(
+            "INSERT OR REPLACE INTO note_embeddings (note_id, dim, vector)
+             VALUES (?1, ?2, ?3)",
+            params![note_id, dim, blob],
+        )?;
+        Ok(())
+    }
+
+    /// Brute-force cosine-similarity search over every `note_embeddings` row
+    /// (migration v4).
+    ///
+    /// Per the Etappe-3 context decision (no `sqlite-vec`, which is fragile
+    /// to cross-compile for Windows), there is no vector index: every
+    /// stored embedding is decoded and scored against `query_vector` with
+    /// [`cosine_similarity`] in Rust, then the `limit` highest-scoring notes
+    /// (descending by [`SemanticHit::score`]) are returned, joined against
+    /// `notes` for display metadata. A negative `limit` is treated as `0`.
+    /// Fast enough for a personal, single-user note collection; does not
+    /// scale to a large shared corpus.
+    pub fn search_notes_semantic(
+        &self,
+        query_vector: &[f32],
+        limit: i64,
+    ) -> Result<Vec<SemanticHit>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT ne.note_id, ne.vector, n.title, n.file_path, n.range_start,
+                    n.range_end, n.created_at
+             FROM note_embeddings ne
+             JOIN notes n ON n.id = ne.note_id",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let vector_blob: Vec<u8> = row.get(1)?;
+            let vector = decode_vector(&vector_blob);
+            let score = cosine_similarity(query_vector, &vector);
+            Ok(SemanticHit {
+                note_id: row.get(0)?,
+                score,
+                title: row.get(2)?,
+                file_path: row.get(3)?,
+                range_start: row.get(4)?,
+                range_end: row.get(5)?,
+                created_at: row.get(6)?,
+            })
+        })?;
+
+        let mut hits = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+        hits.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        hits.truncate(limit.max(0) as usize);
+        Ok(hits)
     }
 }

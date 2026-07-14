@@ -167,6 +167,31 @@ CREATE INDEX idx_notes_created ON notes(created_at);
 CREATE INDEX idx_notes_range ON notes(range_start);
 "#;
 
+/// Schema version 4: `note_embeddings`, one embedding vector per note, for
+/// the brute-force semantic search described in `docs/ROADMAP.md` (Etappe
+/// 3, "Semantik & Politur"). Per the Etappe-3 context decision, MerkWerk
+/// deliberately does *not* depend on the `sqlite-vec` C extension (fragile
+/// to cross-compile for Windows): the vector is stored as a plain BLOB
+/// (`dim` little-endian `f32` values back to back — see
+/// `crate::vector::encode_vector`/`decode_vector`) and similarity search
+/// (`Store::search_notes_semantic`) scores every row in Rust with
+/// `crate::vector::cosine_similarity` instead of using a vector index. That
+/// brute-force scan is fast enough for a personal, single-user note
+/// collection.
+///
+/// `note_id` is both the primary key and a foreign key to `notes(id)` with
+/// `ON DELETE CASCADE`, so deleting a note automatically drops its
+/// embedding and there is at most one embedding row per note — re-embedding
+/// a note goes through `Store::upsert_note_embedding` ("INSERT OR REPLACE"),
+/// never a second row.
+const SCHEMA_V4: &str = r#"
+CREATE TABLE note_embeddings (
+    note_id  INTEGER PRIMARY KEY REFERENCES notes(id) ON DELETE CASCADE,
+    dim      INTEGER NOT NULL,
+    vector   BLOB NOT NULL          -- dim * 4 Bytes, little-endian f32
+);
+"#;
+
 struct Migration {
     version: i64,
     up: &'static str,
@@ -186,6 +211,10 @@ const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 3,
         up: SCHEMA_V3,
+    },
+    Migration {
+        version: 4,
+        up: SCHEMA_V4,
     },
 ];
 
@@ -262,7 +291,14 @@ mod tests {
 
         assert_eq!(current_version(&conn).unwrap(), latest_known_version());
 
-        for table in ["meta", "app_sessions", "events", "snapshots", "notes"] {
+        for table in [
+            "meta",
+            "app_sessions",
+            "events",
+            "snapshots",
+            "notes",
+            "note_embeddings",
+        ] {
             let exists: i64 = conn
                 .query_row(
                     "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
@@ -418,10 +454,15 @@ mod tests {
         assert_eq!(notes_exists_before, 0);
 
         // Re-opening (i.e. calling migrate() again, exactly as `Store::open`
-        // does on every open) must lift the DB from v2 to v3.
+        // does on every open) must lift the DB from v2 to `latest` in one
+        // go — migrate() never stops at an intermediate version, so this
+        // also exercises v3's migration (and, once later versions exist,
+        // everything after it) in the same pass. Compare against
+        // `latest_known_version()` rather than a hardcoded `3`, exactly
+        // like `migrate_upgrades_v1_db_to_v2` above, so this test keeps
+        // passing as later schema versions (v4, ...) are appended.
         migrate(&mut conn).unwrap();
-        assert_eq!(current_version(&conn).unwrap(), 3);
-        assert_eq!(latest_known_version(), 3);
+        assert_eq!(current_version(&conn).unwrap(), latest_known_version());
 
         for name in ["notes", "idx_notes_created", "idx_notes_range"] {
             let exists: i64 = conn
@@ -449,9 +490,83 @@ mod tests {
             .unwrap();
         assert_eq!(count, 1);
 
-        // A second migrate() call (opening the now-v3 database again) stays
-        // a no-op — must not try to re-create the notes table/indexes.
+        // A second migrate() call (opening the now-migrated database again)
+        // stays a no-op — must not try to re-create the notes table/indexes.
         migrate(&mut conn).unwrap();
+        assert_eq!(current_version(&conn).unwrap(), latest_known_version());
+    }
+
+    #[test]
+    fn migrate_upgrades_v3_db_to_v4() {
+        // Build a v3-only database by hand — i.e. simulate a database that
+        // was created before SCHEMA_V4 existed — without going through
+        // migrate() (which would always jump straight to `latest`).
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(SCHEMA_V1).unwrap();
+        conn.execute_batch(SCHEMA_V2).unwrap();
+        conn.execute_batch(SCHEMA_V3).unwrap();
+        conn.execute(
+            "INSERT INTO meta (key, value) VALUES ('schema_version', '3')",
+            [],
+        )
+        .unwrap();
         assert_eq!(current_version(&conn).unwrap(), 3);
+
+        // note_embeddings must not exist yet on a v3 database.
+        let table_exists_before: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master \
+                 WHERE type = 'table' AND name = 'note_embeddings'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(table_exists_before, 0);
+
+        // Re-opening (i.e. calling migrate() again, exactly as `Store::open`
+        // does on every open) must lift the DB from v3 to v4.
+        migrate(&mut conn).unwrap();
+        assert_eq!(current_version(&conn).unwrap(), 4);
+        assert_eq!(latest_known_version(), 4);
+
+        let exists: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE name = 'note_embeddings'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            exists, 1,
+            "note_embeddings should exist after v3->v4 migration"
+        );
+
+        // The new table is actually usable (insert + read back), including
+        // the note_id -> notes(id) foreign key.
+        conn.execute(
+            "INSERT INTO notes
+                (file_path, title, range_start, range_end, created_at, model,
+                 source_snapshot_count)
+             VALUES ('vault/2026-07-14.md', 'Test', 1, 2, 3, 'llama3.1', 5)",
+            [],
+        )
+        .unwrap();
+        let note_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO note_embeddings (note_id, dim, vector) VALUES (?1, ?2, ?3)",
+            params![note_id, 3i64, vec![0u8; 12]],
+        )
+        .unwrap();
+        let count: i64 = conn
+            .query_row("SELECT count(*) FROM note_embeddings", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 1);
+
+        // A second migrate() call (opening the now-v4 database again) stays
+        // a no-op — must not try to re-create the note_embeddings table.
+        migrate(&mut conn).unwrap();
+        assert_eq!(current_version(&conn).unwrap(), 4);
     }
 }

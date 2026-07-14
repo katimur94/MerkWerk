@@ -90,3 +90,30 @@ pub struct NoteRow {
     /// Number of source snapshots the note was distilled from.
     pub source_snapshot_count: i64,
 }
+
+/// One semantic-search hit against `note_embeddings` (migration v4),
+/// returned by [`crate::Store::search_notes_semantic`].
+///
+/// Combines the brute-force cosine [`SemanticHit::score`] with the same
+/// display metadata [`NoteRow`] carries, joined in from `notes`.
+///
+/// Note: unlike the other row structs in this module, `SemanticHit` cannot
+/// derive `Eq` — `score` is an `f32`, which only implements `PartialEq`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SemanticHit {
+    pub note_id: i64,
+    /// Cosine similarity to the query vector, in `[-1.0, 1.0]` for
+    /// non-degenerate inputs (see [`crate::cosine_similarity`]). Higher is
+    /// more similar; results are ordered descending by this value.
+    pub score: f32,
+    /// Optional short heading, mirrors `NoteRow::title`.
+    pub title: Option<String>,
+    /// Path to the `.md` file in the vault, mirrors `NoteRow::file_path`.
+    pub file_path: String,
+    /// Unix milliseconds: start of the source snapshot time range.
+    pub range_start: i64,
+    /// Unix milliseconds: end of the source snapshot time range.
+    pub range_end: i64,
+    /// Unix milliseconds: when the note was created.
+    pub created_at: i64,
+}

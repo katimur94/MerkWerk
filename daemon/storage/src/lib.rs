@@ -9,10 +9,12 @@ mod error;
 mod migrations;
 mod model;
 mod store;
+mod vector;
 
 pub use error::{Error, Result};
-pub use model::{AppSessionRow, EventRow, NoteRow, SearchHit, SnapshotRow};
+pub use model::{AppSessionRow, EventRow, NoteRow, SearchHit, SemanticHit, SnapshotRow};
 pub use store::{BatchItem, PurgeCounts, Store};
+pub use vector::{cosine_similarity, decode_vector, encode_vector};
 
 #[cfg(test)]
 mod tests {
@@ -649,5 +651,140 @@ mod tests {
         let limited = store.list_recent_notes(2).unwrap();
         let limited_ids: Vec<i64> = limited.iter().map(|n| n.id).collect();
         assert_eq!(limited_ids, vec![newest, middle]);
+    }
+
+    // ---- Embeddings (note_embeddings, Migration v4) -------------------
+
+    #[test]
+    fn upsert_note_embedding_then_search_ranks_closest_first() {
+        let (_dir, store) = temp_store();
+
+        let note_a = store
+            .insert_note("a.md", Some("A"), 0, 1, 100, None, 0)
+            .unwrap();
+        let note_b = store
+            .insert_note("b.md", Some("B"), 0, 1, 200, None, 0)
+            .unwrap();
+        let note_c = store
+            .insert_note("c.md", Some("C"), 0, 1, 300, None, 0)
+            .unwrap();
+
+        // A points the same way as the query (closest), B is orthogonal,
+        // C points the opposite way (farthest).
+        store
+            .upsert_note_embedding(note_a, &[1.0, 0.0, 0.0])
+            .unwrap();
+        store
+            .upsert_note_embedding(note_b, &[0.0, 1.0, 0.0])
+            .unwrap();
+        store
+            .upsert_note_embedding(note_c, &[-1.0, 0.0, 0.0])
+            .unwrap();
+
+        let hits = store
+            .search_notes_semantic(&[1.0, 0.0, 0.0], 10)
+            .unwrap();
+        assert_eq!(hits.len(), 3);
+
+        assert_eq!(hits[0].note_id, note_a);
+        assert!((hits[0].score - 1.0).abs() < 1e-6);
+        assert_eq!(hits[0].title.as_deref(), Some("A"));
+        assert_eq!(hits[0].file_path, "a.md");
+        assert_eq!(hits[0].range_start, 0);
+        assert_eq!(hits[0].range_end, 1);
+        assert_eq!(hits[0].created_at, 100);
+
+        assert_eq!(hits[1].note_id, note_b);
+        assert_eq!(hits[2].note_id, note_c);
+        assert!(
+            hits[0].score > hits[1].score && hits[1].score > hits[2].score,
+            "hits must be ordered by descending score: {hits:?}"
+        );
+    }
+
+    #[test]
+    fn search_notes_semantic_limit_caps_result_count() {
+        let (_dir, store) = temp_store();
+        for i in 0..5_i64 {
+            let note_id = store
+                .insert_note(&format!("{i}.md"), None, 0, 1, i, None, 0)
+                .unwrap();
+            store
+                .upsert_note_embedding(note_id, &[i as f32, 1.0])
+                .unwrap();
+        }
+
+        let all = store.search_notes_semantic(&[1.0, 1.0], 100).unwrap();
+        assert_eq!(all.len(), 5);
+
+        let limited = store.search_notes_semantic(&[1.0, 1.0], 2).unwrap();
+        assert_eq!(limited.len(), 2);
+    }
+
+    #[test]
+    fn upsert_note_embedding_replaces_existing_without_duplicating() {
+        let (_dir, store) = temp_store();
+        let note_id = store.insert_note("solo.md", None, 0, 1, 2, None, 0).unwrap();
+
+        store.upsert_note_embedding(note_id, &[1.0, 0.0]).unwrap();
+        store.upsert_note_embedding(note_id, &[0.0, 1.0]).unwrap();
+
+        let hits = store.search_notes_semantic(&[0.0, 1.0], 10).unwrap();
+        assert_eq!(
+            hits.len(),
+            1,
+            "re-embedding the same note_id must replace, not duplicate"
+        );
+        assert_eq!(hits[0].note_id, note_id);
+        assert!((hits[0].score - 1.0).abs() < 1e-6, "must score the latest vector");
+    }
+
+    #[test]
+    fn deleting_note_cascades_to_its_embedding() {
+        let (_dir, mut store) = temp_store();
+        let note_id = store.insert_note("gone.md", None, 0, 1, 2, None, 0).unwrap();
+        store
+            .upsert_note_embedding(note_id, &[1.0, 2.0, 3.0])
+            .unwrap();
+
+        assert_eq!(
+            store
+                .search_notes_semantic(&[1.0, 2.0, 3.0], 10)
+                .unwrap()
+                .len(),
+            1
+        );
+
+        // `notes` has no `expires_at`/TTL of its own (unlike snapshots/
+        // events/app_sessions), so purge_expired never touches it — delete
+        // the note directly, exactly as a future "delete note" feature
+        // would, to exercise the ON DELETE CASCADE on note_embeddings.
+        {
+            let tx = store.transaction().unwrap();
+            tx.execute("DELETE FROM notes WHERE id = ?1", [note_id])
+                .unwrap();
+            tx.commit().unwrap();
+        }
+
+        assert_eq!(
+            store
+                .search_notes_semantic(&[1.0, 2.0, 3.0], 10)
+                .unwrap()
+                .len(),
+            0,
+            "ON DELETE CASCADE should remove the embedding when its note is deleted"
+        );
+
+        // Stronger check than the search-side assertion above: prove the
+        // note_embeddings row itself is gone, not just filtered out by
+        // search_notes_semantic's JOIN against notes.
+        let embedding_count: i64 = {
+            let tx = store.transaction().unwrap();
+            tx.query_row("SELECT count(*) FROM note_embeddings", [], |row| {
+                row.get(0)
+            })
+            .unwrap()
+        };
+        assert_eq!(embedding_count, 0);
     }
 }
