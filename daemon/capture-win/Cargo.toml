@@ -1,0 +1,6 @@
+[package]
+name = "capture-win"
+version.workspace = true
+edition.workspace = true
+
+[lib]

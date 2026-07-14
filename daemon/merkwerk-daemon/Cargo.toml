@@ -1,0 +1,8 @@
+[package]
+name = "merkwerk-daemon"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "merkwerk-daemon"
+path = "src/main.rs"
