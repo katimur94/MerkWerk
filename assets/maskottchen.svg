@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 260" width="260" height="260" role="img" aria-label="Memo, der MerkWerk-Elefant, hält eine Markdown-Notiz">
+  <title>Memo — das MerkWerk-Maskottchen</title>
+
+  <!-- weiche Karte, damit es auf hellem UND dunklem Hintergrund gut aussieht -->
+  <rect x="6" y="6" width="248" height="248" rx="44" fill="#EEF0FB"/>
+  <rect x="6" y="6" width="248" height="248" rx="44" fill="none" stroke="#D7DBF5" stroke-width="2"/>
+
+  <!-- Ohren -->
+  <ellipse cx="72" cy="104" rx="31" ry="40" fill="#5A61D6"/>
+  <ellipse cx="188" cy="104" rx="31" ry="40" fill="#5A61D6"/>
+  <ellipse cx="76" cy="106" rx="18" ry="25" fill="#8E93F0"/>
+  <ellipse cx="184" cy="106" rx="18" ry="25" fill="#8E93F0"/>
+
+  <!-- Kopf -->
+  <ellipse cx="130" cy="104" rx="64" ry="58" fill="#7C82E8"/>
+  <ellipse cx="130" cy="118" rx="52" ry="42" fill="#8E93F0"/>
+
+  <!-- Rüssel: klare Röhre, ringelt sich runter und hält die Notiz -->
+  <path d="M130 130 q-4 40 -4 62 q0 22 20 26" fill="none" stroke="#7C82E8" stroke-width="22" stroke-linecap="round"/>
+  <path d="M130 130 q-4 40 -4 62 q0 22 20 26" fill="none" stroke="#8E93F0" stroke-width="10" stroke-linecap="round"/>
+
+  <!-- Augen -->
+  <circle cx="107" cy="100" r="13" fill="#ffffff"/>
+  <circle cx="153" cy="100" r="13" fill="#ffffff"/>
+  <circle cx="110" cy="102" r="6.5" fill="#2A2E4A"/>
+  <circle cx="156" cy="102" r="6.5" fill="#2A2E4A"/>
+  <circle cx="112" cy="99" r="2.1" fill="#ffffff"/>
+  <circle cx="158" cy="99" r="2.1" fill="#ffffff"/>
+
+  <!-- Wangen -->
+  <circle cx="90" cy="124" r="9" fill="#F7A8C4" opacity="0.7"/>
+  <circle cx="170" cy="124" r="9" fill="#F7A8C4" opacity="0.7"/>
+
+  <!-- kleine Notiz (Markdown, das sich selbst schreibt) -->
+  <g transform="rotate(-5 150 205)">
+    <rect x="112" y="176" width="86" height="66" rx="9" fill="#FBF3E0" stroke="#E4D8B8" stroke-width="2.5"/>
+    <text x="122" y="199" font-family="monospace" font-size="15" fill="#C06A3A" font-weight="bold">#</text>
+    <line x1="136" y1="194" x2="186" y2="194" stroke="#B9AE8C" stroke-width="3.5" stroke-linecap="round"/>
+    <line x1="122" y1="212" x2="188" y2="212" stroke="#CFC7AC" stroke-width="3.5" stroke-linecap="round"/>
+    <line x1="122" y1="226" x2="176" y2="226" stroke="#CFC7AC" stroke-width="3.5" stroke-linecap="round"/>
+  </g>
+
+  <!-- Rüsselspitze über der Notiz, damit er sie sichtbar "hält" -->
+  <path d="M126 214 q4 20 22 22" fill="none" stroke="#7C82E8" stroke-width="20" stroke-linecap="round"/>
+</svg>
