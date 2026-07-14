@@ -33,6 +33,29 @@ mod tests {
     }
 
     #[test]
+    fn open_readonly_reads_but_rejects_writes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("merkwerk.sqlite3");
+
+        // Writer (daemon) creates the DB and inserts a row.
+        let writer = Store::open(&path).unwrap();
+        let sid = writer
+            .insert_app_session("code.exe", 1_000, None)
+            .unwrap();
+        drop(writer);
+
+        // Reader (app) sees the row read-only...
+        let reader = Store::open_readonly(&path).unwrap();
+        let sessions = reader.sessions_between(0, 10_000).unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].id, sid);
+
+        // ...but any write is rejected by PRAGMA query_only.
+        let write = reader.insert_app_session("evil.exe", 2_000, None);
+        assert!(write.is_err(), "read-only store must reject writes");
+    }
+
+    #[test]
     fn opening_twice_is_idempotent() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("merkwerk.sqlite3");

@@ -72,6 +72,20 @@ impl Store {
         Ok(Store { conn })
     }
 
+    /// Open the database at `path` with read-only *semantics* for the app
+    /// (ENTSCHEIDUNGEN.md D2/D8): the connection is opened read-write so WAL's
+    /// `-shm`/`-wal` sidecars work for a reader, but `PRAGMA query_only = ON`
+    /// forbids any mutation at the SQLite level. No migration is run — a reader
+    /// must never alter the schema (and `query_only` would reject it anyway).
+    ///
+    /// This is what `merkwerk-app` uses to render the timeline while the daemon
+    /// keeps writing on its own connection.
+    pub fn open_readonly(path: &Path) -> Result<Store> {
+        let conn = Connection::open(path)?;
+        conn.pragma_update(None, "query_only", true)?;
+        Ok(Store { conn })
+    }
+
     fn init_connection(conn: &mut Connection) -> Result<()> {
         // journal_mode returns the resulting mode as a row, so it needs
         // pragma_update_and_check rather than plain pragma_update.

@@ -25,6 +25,10 @@ use tauri::{
     Manager, State,
 };
 
+mod paths;
+mod settings;
+mod timeline;
+
 /// Placeholder in-process stand-in for the daemon's real run state.
 ///
 /// Once IPC is wired up this goes away: `get_daemon_status`/`pause_daemon`/
@@ -47,24 +51,6 @@ struct DaemonStatus {
     events_captured: u64,
     snapshots_captured: u64,
     uptime_secs: u64,
-}
-
-/// Placeholder shape for a single timeline row.
-///
-/// Loosely mirrors the `app_sessions` / `events` / `snapshots` tables in
-/// `daemon/storage/src/model.rs` (`AppSessionRow`, `EventRow`,
-/// `SnapshotRow`). Once `list_timeline` reads the real read-only SQLite DB
-/// it will likely return a merged view built from those three tables
-/// instead of this placeholder.
-#[derive(Debug, Clone, Serialize)]
-struct TimelineEntry {
-    id: i64,
-    session_id: Option<i64>,
-    process_name: String,
-    kind: String,
-    ts_ms: i64,
-    window_title: Option<String>,
-    url: Option<String>,
 }
 
 /// Read the daemon's current status.
@@ -100,19 +86,6 @@ fn pause_daemon(state: State<'_, DaemonState>) -> Result<(), String> {
 fn resume_daemon(state: State<'_, DaemonState>) -> Result<(), String> {
     *state.paused.lock().expect("daemon state mutex poisoned") = false;
     Ok(())
-}
-
-/// List timeline entries in `[from_ms, to_ms]`.
-///
-/// TODO: eine read-only SQLite-Verbindung (`mode=ro`, siehe ENTSCHEIDUNGEN.md
-/// D2) gegen die Daemon-DB öffnen und `app_sessions`/`events`/`snapshots`
-/// zwischen `from_ms` und `to_ms` lesen (siehe `daemon/storage/src/store.rs`:
-/// `sessions_between`, `events_for_session`, `snapshots_for_session`). Bis
-/// dahin: leere Platzhalter-Timeline.
-#[tauri::command]
-fn list_timeline(from_ms: i64, to_ms: i64) -> Vec<TimelineEntry> {
-    let _ = (from_ms, to_ms);
-    Vec::new()
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -164,7 +137,11 @@ pub fn run() {
             get_daemon_status,
             pause_daemon,
             resume_daemon,
-            list_timeline,
+            timeline::list_timeline,
+            settings::get_blacklist,
+            settings::set_blacklist,
+            settings::get_autostart,
+            settings::set_autostart,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the MerkWerk tauri application");

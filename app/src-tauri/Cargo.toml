@@ -19,6 +19,21 @@ tauri = { version = "2", features = ["tray-icon"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# Reuse the daemon crates so the app and daemon can never disagree on the DB
+# schema (storage) or the config file format (config). storage gives read-only
+# access + the Serialize-able row types; config gives the exact TOML shape the
+# daemon reads. Path deps across the workspace boundary are fine — this crate
+# declares its own empty [workspace] below and is not a member of the daemon one.
+storage = { path = "../../daemon/storage" }
+config = { path = "../../daemon/config" }
+
+[target.'cfg(windows)'.dependencies]
+# Autostart toggle writes the HKCU Run key (delayed 30 s handled in the daemon).
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_System_Registry",
+] }
+
 # This crate is standalone on purpose (see ARCHITEKTUR.md repo layout /app):
 # it must NOT be swept into the ../../daemon Cargo workspace (which other
 # agents edit concurrently), so it declares its own empty workspace here.

@@ -38,6 +38,16 @@ Pro Snapshot max. 20 KB sichtbarer Text (`truncated`-Flag bei Überschreitung).
 UIA-TreeWalk mit Tiefen- und Knotenlimit gegen Latenz-Spitzen bei riesigen
 Element-Bäumen. Passwortfeld-Subtrees werden übersprungen.
 
+## D8 — App liest read-only via `PRAGMA query_only`, nicht `SQLITE_OPEN_READ_ONLY`
+**Status:** entschieden.
+Die App (`storage::Store::open_readonly`) öffnet die DB read-**write** (damit die
+WAL-Sidecars `-shm`/`-wal` für einen Leser funktionieren) und erzwingt die
+Nur-Lese-Semantik über `PRAGMA query_only = ON`. Ein striktes
+`SQLITE_OPEN_READ_ONLY` scheitert bei WAL, weil der Leser das benötigte `-shm`
+nicht anlegen darf. `query_only` weist jede Mutation auf SQLite-Ebene ab
+(per Test verifiziert) und erfüllt so D2 („App schreibt nie") verlässlich.
+Es wird keine Migration ausgeführt — ein Leser verändert das Schema nie.
+
 ## D7 — rusqlite auf 0.31 gepinnt (Toolchain-Kompatibilität)
 **Status:** entschieden (Umgebungsbedingt, nach Subagent-Blocker).
 `rusqlite 0.40` zieht `libsqlite3-sys 0.38`, dessen build.rs das **unstable**
