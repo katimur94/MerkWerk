@@ -1,5 +1,12 @@
 # Plan Etappe 0 — Task-Zerlegung & Subagent-Zuordnung
 
+> **Status: alle Tasks T1–T13 abgeschlossen** (Build/Tests grün in der
+> Linux-Sandbox; echte Windows-Läufe siehe ARCHITEKTUR.md → „Status & Nachweise").
+> T3 lief zunächst auf den libsqlite3-sys/`cfg_select`-Blocker → von Fable gelöst
+> (D7). T7 (UIA) native Testbarkeit → `text_budget`-Extraktion durch Fable.
+> T8 (Runtime), die `policy`/`control`-Testkerne, der storage-read-only-Opener
+> (D8) und die App-Command-Seams wurden von Fable integriert.
+
 Reihenfolge respektiert Abhängigkeiten. Modell/Effort nach Kickoff-Tabelle.
 Jeder Task hat Dateipfade, Schnittstelle und Definition-of-Done (DoD).
 

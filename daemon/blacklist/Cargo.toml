@@ -1,0 +1,9 @@
+[package]
+name = "blacklist"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+
+[dependencies]
+globset = "0.4.16"
