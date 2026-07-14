@@ -1,17 +1,20 @@
 import { TimelineView } from "./components/TimelineView";
 import { SearchView } from "./components/SearchView";
+import { NotesView } from "./components/NotesView";
 import { SettingsView } from "./components/SettingsView";
 
-// MerkWerk-App-Grundgerüst (Etappe 0).
+// MerkWerk-App-Grundgerüst (Etappe 0/2).
 //
 // Bereiche laut ARCHITEKTUR.md ("merkwerk-app"):
 //   - Tray-Status: Kurzstatus des Daemons (Running/Paused, Zähler).
 //   - Timeline:    Zeitleiste aus der read-only SQLite-DB.
 //   - Suche:       Volltextsuche (FTS5) über dieselbe read-only DB.
+//   - Notizen:     KI-Notizen (Markdown-Vault, D10) + "Jetzt destillieren".
 //   - Settings:    Blacklist-Editor + Autostart-Toggle.
 //
-// Timeline-, Such- und Settings-Inhalte sind Komponenten aus eigenen Dateien
-// (siehe ./components/TimelineView.tsx, ./components/SearchView.tsx,
+// Timeline-, Such-, Notizen- und Settings-Inhalte sind Komponenten aus
+// eigenen Dateien (siehe ./components/TimelineView.tsx,
+// ./components/SearchView.tsx, ./components/NotesView.tsx,
 // ./components/SettingsView.tsx). Der Tray-Status-Bereich bleibt hier
 // vorerst inline, nur als Platzhalter.
 function App() {
@@ -30,6 +33,7 @@ function App() {
         <main className="app__timeline">
           <TimelineView />
           <SearchView />
+          <NotesView />
         </main>
 
         <aside className="app__settings">
