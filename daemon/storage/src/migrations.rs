@@ -139,6 +139,34 @@ SELECT id, coalesce(window_title, ''), coalesce(url, ''), coalesce(text_content,
 FROM snapshots;
 "#;
 
+/// Schema version 3: the `notes` table, metadata-only storage for the
+/// AI-generated Markdown notes described in `ENTSCHEIDUNGEN.md` D10 and
+/// `docs/ROADMAP.md` (Etappe 2, "Notiz-Vault"). The note's actual content
+/// lives in a `.md` file in the vault directory — `file_path` points at it,
+/// and that file is the source of truth, not this row; the table exists so
+/// the app can list/query notes (by recency, by source time range) without
+/// walking the vault directory on disk.
+///
+/// `range_start`/`range_end` are the Unix-ms bounds of the source snapshot
+/// time window the note was distilled from. `idx_notes_created` backs the
+/// recency ordering used by `Store::list_recent_notes`; `idx_notes_range`
+/// backs future range-overlap queries over the source window.
+const SCHEMA_V3: &str = r#"
+CREATE TABLE notes (
+    id            INTEGER PRIMARY KEY,
+    file_path     TEXT NOT NULL,          -- Pfad zur .md-Datei im Vault (Quelle der Wahrheit)
+    title         TEXT,                    -- optionale Kurzüberschrift
+    range_start   INTEGER NOT NULL,        -- Quellzeitraum-Beginn (Unix-ms)
+    range_end     INTEGER NOT NULL,        -- Quellzeitraum-Ende (Unix-ms)
+    created_at    INTEGER NOT NULL,        -- Erstellzeit (Unix-ms)
+    model         TEXT,                    -- verwendetes KI-Modell
+    source_snapshot_count INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX idx_notes_created ON notes(created_at);
+CREATE INDEX idx_notes_range ON notes(range_start);
+"#;
+
 struct Migration {
     version: i64,
     up: &'static str,
@@ -154,6 +182,10 @@ const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 2,
         up: SCHEMA_V2,
+    },
+    Migration {
+        version: 3,
+        up: SCHEMA_V3,
     },
 ];
 
@@ -230,7 +262,7 @@ mod tests {
 
         assert_eq!(current_version(&conn).unwrap(), latest_known_version());
 
-        for table in ["meta", "app_sessions", "events", "snapshots"] {
+        for table in ["meta", "app_sessions", "events", "snapshots", "notes"] {
             let exists: i64 = conn
                 .query_row(
                     "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
@@ -316,10 +348,12 @@ mod tests {
         assert_eq!(fts_exists_before, 0);
 
         // Re-opening (i.e. calling migrate() again, exactly as `Store::open`
-        // does on every open) must lift the DB from v1 to v2.
+        // does on every open) must lift the DB from v1 all the way to
+        // `latest` in one go — migrate() never stops at an intermediate
+        // version, so this also exercises v2's migration (and, once later
+        // versions exist, everything after it) in the same pass.
         migrate(&mut conn).unwrap();
-        assert_eq!(current_version(&conn).unwrap(), 2);
-        assert_eq!(latest_known_version(), 2);
+        assert_eq!(current_version(&conn).unwrap(), latest_known_version());
 
         for name in [
             "snapshots_fts",
@@ -351,9 +385,73 @@ mod tests {
             "pre-existing v1 row must be searchable after the v2 backfill"
         );
 
-        // A second migrate() call (opening the now-v2 database again) stays
-        // a no-op — must not try to re-create the FTS5 table/triggers.
+        // A second migrate() call (opening the now-migrated database again)
+        // stays a no-op — must not try to re-create the FTS5 table/triggers.
         migrate(&mut conn).unwrap();
+        assert_eq!(current_version(&conn).unwrap(), latest_known_version());
+    }
+
+    #[test]
+    fn migrate_upgrades_v2_db_to_v3() {
+        // Build a v2-only database by hand — i.e. simulate a database that
+        // was created before SCHEMA_V3 existed — without going through
+        // migrate() (which would always jump straight to `latest`).
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(SCHEMA_V1).unwrap();
+        conn.execute_batch(SCHEMA_V2).unwrap();
+        conn.execute(
+            "INSERT INTO meta (key, value) VALUES ('schema_version', '2')",
+            [],
+        )
+        .unwrap();
         assert_eq!(current_version(&conn).unwrap(), 2);
+
+        // notes must not exist yet on a v2 database.
+        let notes_exists_before: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master \
+                 WHERE type = 'table' AND name = 'notes'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(notes_exists_before, 0);
+
+        // Re-opening (i.e. calling migrate() again, exactly as `Store::open`
+        // does on every open) must lift the DB from v2 to v3.
+        migrate(&mut conn).unwrap();
+        assert_eq!(current_version(&conn).unwrap(), 3);
+        assert_eq!(latest_known_version(), 3);
+
+        for name in ["notes", "idx_notes_created", "idx_notes_range"] {
+            let exists: i64 = conn
+                .query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE name = ?1",
+                    params![name],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(exists, 1, "{name} should exist after v2->v3 migration");
+        }
+
+        // The new table is actually usable (insert + read back), not just
+        // present in sqlite_master.
+        conn.execute(
+            "INSERT INTO notes
+                (file_path, title, range_start, range_end, created_at, model,
+                 source_snapshot_count)
+             VALUES ('vault/2026-07-14.md', 'Test', 1, 2, 3, 'llama3.1', 5)",
+            [],
+        )
+        .unwrap();
+        let count: i64 = conn
+            .query_row("SELECT count(*) FROM notes", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 1);
+
+        // A second migrate() call (opening the now-v3 database again) stays
+        // a no-op — must not try to re-create the notes table/indexes.
+        migrate(&mut conn).unwrap();
+        assert_eq!(current_version(&conn).unwrap(), 3);
     }
 }

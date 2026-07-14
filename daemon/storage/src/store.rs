@@ -5,12 +5,12 @@
 
 use std::path::Path;
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 
 use crate::error::Result;
 use crate::migrations::migrate;
-use crate::model::{AppSessionRow, EventRow, SearchHit, SnapshotRow};
+use crate::model::{AppSessionRow, EventRow, NoteRow, SearchHit, SnapshotRow};
 
 /// Escape `raw` into a double-quoted FTS5 phrase literal, so arbitrary user
 /// input can never be parsed as FTS5 query syntax (column filters like
@@ -430,5 +430,91 @@ impl Store {
             events,
             sessions,
         })
+    }
+
+    /// Insert a new `notes` row (migration v3) and return its id.
+    ///
+    /// Per `ENTSCHEIDUNGEN.md` D10, this stores only metadata: `file_path`
+    /// must point at the `.md` file in the vault that actually holds the
+    /// note's content — this call does not read or write that file itself,
+    /// it only records the pointer to it.
+    #[allow(clippy::too_many_arguments)]
+    pub fn insert_note(
+        &self,
+        file_path: &str,
+        title: Option<&str>,
+        range_start: i64,
+        range_end: i64,
+        created_at: i64,
+        model: Option<&str>,
+        source_snapshot_count: i64,
+    ) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO notes
+                (file_path, title, range_start, range_end, created_at, model,
+                 source_snapshot_count)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                file_path,
+                title,
+                range_start,
+                range_end,
+                created_at,
+                model,
+                source_snapshot_count
+            ],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// The `limit` most recently created notes, newest first
+    /// (`ORDER BY created_at DESC`).
+    pub fn list_recent_notes(&self, limit: i64) -> Result<Vec<NoteRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, file_path, title, range_start, range_end, created_at, model,
+                    source_snapshot_count
+             FROM notes
+             ORDER BY created_at DESC
+             LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit], |row| {
+            Ok(NoteRow {
+                id: row.get(0)?,
+                file_path: row.get(1)?,
+                title: row.get(2)?,
+                range_start: row.get(3)?,
+                range_end: row.get(4)?,
+                created_at: row.get(5)?,
+                model: row.get(6)?,
+                source_snapshot_count: row.get(7)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Look up a single `notes` row by id, or `None` if it doesn't exist.
+    pub fn get_note(&self, id: i64) -> Result<Option<NoteRow>> {
+        let note = self
+            .conn
+            .query_row(
+                "SELECT id, file_path, title, range_start, range_end, created_at, model,
+                        source_snapshot_count
+                 FROM notes WHERE id = ?1",
+                params![id],
+                |row| {
+                    Ok(NoteRow {
+                        id: row.get(0)?,
+                        file_path: row.get(1)?,
+                        title: row.get(2)?,
+                        range_start: row.get(3)?,
+                        range_end: row.get(4)?,
+                        created_at: row.get(5)?,
+                        model: row.get(6)?,
+                        source_snapshot_count: row.get(7)?,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(note)
     }
 }

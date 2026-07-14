@@ -66,3 +66,27 @@ pub struct SearchHit {
     /// with `[` `]` markers around matched terms and `…` for elided text.
     pub snippet: String,
 }
+
+/// Metadata for one AI-generated Markdown note (`notes` row, migration v3).
+///
+/// Per `ENTSCHEIDUNGEN.md` D10, this row holds only *metadata* — `file_path`
+/// points at the `.md` file in the vault, which is the source of truth for
+/// the note's actual content; the content itself is never duplicated here.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NoteRow {
+    pub id: i64,
+    /// Path to the `.md` file in the vault (source of truth for content).
+    pub file_path: String,
+    /// Optional short heading.
+    pub title: Option<String>,
+    /// Unix milliseconds: start of the source snapshot time range.
+    pub range_start: i64,
+    /// Unix milliseconds: end of the source snapshot time range.
+    pub range_end: i64,
+    /// Unix milliseconds: when the note was created.
+    pub created_at: i64,
+    /// AI model used to generate the note (e.g. an Ollama model name), if known.
+    pub model: Option<String>,
+    /// Number of source snapshots the note was distilled from.
+    pub source_snapshot_count: i64,
+}

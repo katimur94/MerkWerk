@@ -11,7 +11,7 @@ mod model;
 mod store;
 
 pub use error::{Error, Result};
-pub use model::{AppSessionRow, EventRow, SearchHit, SnapshotRow};
+pub use model::{AppSessionRow, EventRow, NoteRow, SearchHit, SnapshotRow};
 pub use store::{BatchItem, PurgeCounts, Store};
 
 #[cfg(test)]
@@ -582,5 +582,72 @@ mod tests {
         );
         assert_eq!(store.sessions_between(0, 10).unwrap().len(), 1);
         assert_eq!(store.search("keep", 10).unwrap().len(), 1);
+    }
+
+    // ---- Notizen (notes, Migration v3) --------------------------------
+
+    #[test]
+    fn insert_note_and_get_note_roundtrip() {
+        let (_dir, store) = temp_store();
+
+        let id = store
+            .insert_note(
+                "2026/07-14-morning.md",
+                Some("Morning focus"),
+                1_000,
+                5_000,
+                5_100,
+                Some("llama3.1"),
+                12,
+            )
+            .unwrap();
+        assert!(id > 0);
+
+        let note = store.get_note(id).unwrap().expect("note must exist");
+        assert_eq!(note.id, id);
+        assert_eq!(note.file_path, "2026/07-14-morning.md");
+        assert_eq!(note.title.as_deref(), Some("Morning focus"));
+        assert_eq!(note.range_start, 1_000);
+        assert_eq!(note.range_end, 5_000);
+        assert_eq!(note.created_at, 5_100);
+        assert_eq!(note.model.as_deref(), Some("llama3.1"));
+        assert_eq!(note.source_snapshot_count, 12);
+    }
+
+    #[test]
+    fn insert_note_allows_optional_fields_to_be_none() {
+        let (_dir, store) = temp_store();
+
+        let id = store
+            .insert_note("solo.md", None, 0, 1, 2, None, 0)
+            .unwrap();
+
+        let note = store.get_note(id).unwrap().unwrap();
+        assert_eq!(note.title, None);
+        assert_eq!(note.model, None);
+        assert_eq!(note.source_snapshot_count, 0);
+    }
+
+    #[test]
+    fn get_note_returns_none_for_missing_id() {
+        let (_dir, store) = temp_store();
+        assert_eq!(store.get_note(999_999).unwrap(), None);
+    }
+
+    #[test]
+    fn list_recent_notes_orders_by_created_at_desc_and_limits() {
+        let (_dir, store) = temp_store();
+
+        let oldest = store.insert_note("a.md", None, 0, 1, 100, None, 0).unwrap();
+        let middle = store.insert_note("b.md", None, 0, 1, 200, None, 0).unwrap();
+        let newest = store.insert_note("c.md", None, 0, 1, 300, None, 0).unwrap();
+
+        let all = store.list_recent_notes(10).unwrap();
+        let ids: Vec<i64> = all.iter().map(|n| n.id).collect();
+        assert_eq!(ids, vec![newest, middle, oldest]);
+
+        let limited = store.list_recent_notes(2).unwrap();
+        let limited_ids: Vec<i64> = limited.iter().map(|n| n.id).collect();
+        assert_eq!(limited_ids, vec![newest, middle]);
     }
 }
