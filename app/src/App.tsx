@@ -1,22 +1,24 @@
 import { TimelineView } from "./components/TimelineView";
 import { SearchView } from "./components/SearchView";
 import { NotesView } from "./components/NotesView";
+import { SemanticSearchView } from "./components/SemanticSearchView";
 import { SettingsView } from "./components/SettingsView";
 
-// MerkWerk-App-Grundgerüst (Etappe 0/2).
+// MerkWerk-App-Grundgerüst (Etappe 0/2/3).
 //
 // Bereiche laut ARCHITEKTUR.md ("merkwerk-app"):
-//   - Tray-Status: Kurzstatus des Daemons (Running/Paused, Zähler).
-//   - Timeline:    Zeitleiste aus der read-only SQLite-DB.
-//   - Suche:       Volltextsuche (FTS5) über dieselbe read-only DB.
-//   - Notizen:     KI-Notizen (Markdown-Vault, D10) + "Jetzt destillieren".
-//   - Settings:    Blacklist-Editor + Autostart-Toggle.
+//   - Tray-Status:         Kurzstatus des Daemons (Running/Paused, Zähler).
+//   - Timeline:            Zeitleiste aus der read-only SQLite-DB.
+//   - Suche:               Volltextsuche (FTS5) über dieselbe read-only DB.
+//   - Notizen:             KI-Notizen (Markdown-Vault, D10) + "Jetzt destillieren".
+//   - Semantische Suche:   Cosinus-Suche über Notiz-Embeddings via Ollama (D11, Etappe 3).
+//   - Settings:            Blacklist-Editor + Autostart-Toggle.
 //
-// Timeline-, Such-, Notizen- und Settings-Inhalte sind Komponenten aus
-// eigenen Dateien (siehe ./components/TimelineView.tsx,
+// Timeline-, Such-, Notizen-, Semantische-Suche- und Settings-Inhalte sind
+// Komponenten aus eigenen Dateien (siehe ./components/TimelineView.tsx,
 // ./components/SearchView.tsx, ./components/NotesView.tsx,
-// ./components/SettingsView.tsx). Der Tray-Status-Bereich bleibt hier
-// vorerst inline, nur als Platzhalter.
+// ./components/SemanticSearchView.tsx, ./components/SettingsView.tsx). Der
+// Tray-Status-Bereich bleibt hier vorerst inline, nur als Platzhalter.
 function App() {
   return (
     <div className="app">
@@ -34,6 +36,7 @@ function App() {
           <TimelineView />
           <SearchView />
           <NotesView />
+          <SemanticSearchView />
         </main>
 
         <aside className="app__settings">

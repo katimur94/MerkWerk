@@ -28,6 +28,7 @@ use tauri::{
 mod notes;
 mod paths;
 mod search;
+mod semantic;
 mod settings;
 mod timeline;
 
@@ -144,6 +145,7 @@ pub fn run() {
             notes::list_notes,
             notes::get_note_markdown,
             notes::distill_now,
+            semantic::semantic_search_notes,
             settings::get_blacklist,
             settings::set_blacklist,
             settings::get_autostart,
