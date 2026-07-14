@@ -154,11 +154,22 @@ pub struct RetentionConfig {
     /// Anzahl Tage, nach denen Rohdaten (Events/Snapshots/Sessions) ablaufen.
     #[serde(default = "RetentionConfig::default_ttl_days")]
     pub ttl_days: u32,
+
+    /// Intervall in Sekunden zwischen zwei Läufen des Retention-Löschjobs
+    /// (`Store::purge_expired`), siehe ROADMAP.md Etappe 1.
+    #[serde(default = "RetentionConfig::default_purge_interval_secs")]
+    pub purge_interval_secs: u64,
 }
 
 impl RetentionConfig {
     const fn default_ttl_days() -> u32 {
         30
+    }
+
+    /// Stündlich: häufig genug, damit abgelaufene Rohdaten zeitnah verschwinden,
+    /// selten genug, um auf einer 24/7 laufenden Erfassung nicht ins Gewicht zu fallen.
+    const fn default_purge_interval_secs() -> u64 {
+        3600
     }
 }
 
@@ -166,6 +177,7 @@ impl Default for RetentionConfig {
     fn default() -> Self {
         Self {
             ttl_days: Self::default_ttl_days(),
+            purge_interval_secs: Self::default_purge_interval_secs(),
         }
     }
 }
@@ -273,6 +285,9 @@ mod tests {
         let loaded = Config::load(&path).expect("load");
 
         assert_eq!(original, loaded);
+        // Explizit: das neue Retention-Intervall-Feld nimmt am Round-Trip teil
+        // und behält seinen Default (stündlich).
+        assert_eq!(loaded.retention.purge_interval_secs, 3600);
     }
 
     #[test]
@@ -322,6 +337,23 @@ mod tests {
         assert_eq!(loaded.blacklist, BlacklistConfig::default());
         assert_eq!(loaded.snapshot, SnapshotConfig::default());
         assert_eq!(loaded.retention, RetentionConfig::default());
+    }
+
+    #[test]
+    fn retention_partial_toml_keeps_ttl_and_defaults_purge_interval() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+
+        // Nur `ttl_days` gesetzt; `purge_interval_secs` muss auf den Default fallen.
+        fs::write(&path, "[retention]\nttl_days = 7\n").expect("write partial toml");
+
+        let loaded = Config::load(&path).expect("load partial retention");
+
+        assert_eq!(loaded.retention.ttl_days, 7);
+        assert_eq!(
+            loaded.retention.purge_interval_secs,
+            RetentionConfig::default().purge_interval_secs
+        );
     }
 
     #[test]

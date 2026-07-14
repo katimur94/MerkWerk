@@ -8,8 +8,11 @@
 //!   Loop nie blockieren.
 //! - **IPC-Thread** ([`crate::ipc_server`]): Named-Pipe-Steuerkanal.
 //! - **Erfassungs-Loop** (dieser Thread): einziger Besitzer des [`Store`] (D2 —
-//!   ein Schreiber), führt den `app_session`-Lebenszyklus und wendet die
-//!   Blacklist *an der Quelle* an.
+//!   ein Schreiber), führt den `app_session`-Lebenszyklus, wendet die
+//!   Blacklist *an der Quelle* an und führt den Retention-Löschjob
+//!   (`purge_expired`) periodisch aus — siehe unten in [`run`]. Da der `Store`
+//!   diesem Thread exklusiv gehört (D2), läuft der Purge *in* diesem Loop statt
+//!   in einem eigenen Thread.
 //!
 //! **Privacy an der Quelle:** Ein Fenster, dessen Prozess/Titel (bei Fokuswechsel)
 //! oder dessen aufgelöste URL/Titel (nach dem Snapshot) auf die Blacklist trifft,
@@ -81,6 +84,19 @@ fn ttl(ts_ms: i64, ttl_ms: i64) -> Option<i64> {
     }
 }
 
+/// Loggt das Ergebnis eines Retention-Purge-Laufs (`label` z. B. "Start-Purge"
+/// oder "Purge"). Ein fehlgeschlagener Purge wird nur geloggt — er darf den
+/// Erfassungs-Loop nie beenden, da sonst auch die eigentliche Erfassung stünde.
+fn log_purge_result(label: &str, result: storage::Result<storage::PurgeCounts>) {
+    match result {
+        Ok(counts) => eprintln!(
+            "[retention] {label}: {} Snapshots, {} Events, {} Sessions gelöscht",
+            counts.snapshots, counts.events, counts.sessions
+        ),
+        Err(e) => eprintln!("[retention] {label} fehlgeschlagen: {e}"),
+    }
+}
+
 fn build_blacklist(cfg: &Config) -> Blacklist {
     Blacklist::new(
         cfg.blacklist.process_names.clone(),
@@ -145,6 +161,14 @@ pub fn run(
     let mut debouncer = build_debouncer(&cfg);
     let mut snap_cfg = build_snap_cfg(&cfg);
     let mut ttl_ms = cfg.retention.ttl_days as i64 * 86_400_000;
+    let mut purge_interval_ms = cfg.retention.purge_interval_secs as i64 * 1000;
+
+    // Retention-Löschjob, einmal sofort beim Start: bereits abgelaufene
+    // Altdaten (z. B. aus einer vorherigen Laufzeit) sollen nicht erst eine
+    // volle Intervall-Länge liegen bleiben, bis der erste Tick im Loop unten
+    // sie einsammelt.
+    log_purge_result("Start-Purge", store.purge_expired(now_ms()));
+    let mut last_purge_ms = now_ms();
 
     let shared = Arc::new(Shared::new());
 
@@ -184,6 +208,7 @@ pub fn run(
                     debouncer = build_debouncer(&cfg);
                     snap_cfg = build_snap_cfg(&cfg);
                     ttl_ms = cfg.retention.ttl_days as i64 * 86_400_000;
+                    purge_interval_ms = cfg.retention.purge_interval_secs as i64 * 1000;
                 }
                 Err(e) => eprintln!("[config] Reload fehlgeschlagen: {e}"),
             }
@@ -217,6 +242,17 @@ pub fn run(
             default(tick) => {
                 for t in debouncer.tick(now_ms() as u64) {
                     handle_trigger(t, &store, &blacklist, &shared, &tx_job, snap_cfg, ttl_ms, &mut active);
+                }
+
+                // Retention-Purge bewusst unabhängig vom Pause-Zustand: Pause
+                // bedeutet "keine neue Erfassung", aber das Aufräumen bereits
+                // abgelaufener Altdaten ist keine Erfassung, sondern reine
+                // Haushaltung — sie soll auch während einer Pause pünktlich
+                // weiterlaufen, statt sich danach aufzustauen.
+                let now = now_ms();
+                if now.saturating_sub(last_purge_ms) >= purge_interval_ms {
+                    log_purge_result("Purge", store.purge_expired(now));
+                    last_purge_ms = now;
                 }
             }
         }

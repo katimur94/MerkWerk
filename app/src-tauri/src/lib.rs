@@ -26,6 +26,7 @@ use tauri::{
 };
 
 mod paths;
+mod search;
 mod settings;
 mod timeline;
 
@@ -138,6 +139,7 @@ pub fn run() {
             pause_daemon,
             resume_daemon,
             timeline::list_timeline,
+            search::search_snapshots,
             settings::get_blacklist,
             settings::set_blacklist,
             settings::get_autostart,

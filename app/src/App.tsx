@@ -1,17 +1,19 @@
 import { TimelineView } from "./components/TimelineView";
+import { SearchView } from "./components/SearchView";
 import { SettingsView } from "./components/SettingsView";
 
 // MerkWerk-App-Grundgerüst (Etappe 0).
 //
-// Drei Bereiche laut ARCHITEKTUR.md ("merkwerk-app"):
+// Bereiche laut ARCHITEKTUR.md ("merkwerk-app"):
 //   - Tray-Status: Kurzstatus des Daemons (Running/Paused, Zähler).
 //   - Timeline:    Zeitleiste aus der read-only SQLite-DB.
+//   - Suche:       Volltextsuche (FTS5) über dieselbe read-only DB.
 //   - Settings:    Blacklist-Editor + Autostart-Toggle.
 //
-// Timeline- und Settings-Inhalte sind Platzhalter-Komponenten aus eigenen
-// Dateien (siehe ./components/TimelineView.tsx, ./components/SettingsView.tsx)
-// und werden in späteren Tasks ausimplementiert. Der Tray-Status-Bereich
-// bleibt hier vorerst inline, ebenfalls nur als Platzhalter.
+// Timeline-, Such- und Settings-Inhalte sind Komponenten aus eigenen Dateien
+// (siehe ./components/TimelineView.tsx, ./components/SearchView.tsx,
+// ./components/SettingsView.tsx). Der Tray-Status-Bereich bleibt hier
+// vorerst inline, nur als Platzhalter.
 function App() {
   return (
     <div className="app">
@@ -27,6 +29,7 @@ function App() {
       <div className="app__body">
         <main className="app__timeline">
           <TimelineView />
+          <SearchView />
         </main>
 
         <aside className="app__settings">
