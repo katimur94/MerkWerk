@@ -38,6 +38,16 @@ Pro Snapshot max. 20 KB sichtbarer Text (`truncated`-Flag bei Überschreitung).
 UIA-TreeWalk mit Tiefen- und Knotenlimit gegen Latenz-Spitzen bei riesigen
 Element-Bäumen. Passwortfeld-Subtrees werden übersprungen.
 
+## D7 — rusqlite auf 0.31 gepinnt (Toolchain-Kompatibilität)
+**Status:** entschieden (Umgebungsbedingt, nach Subagent-Blocker).
+`rusqlite 0.40` zieht `libsqlite3-sys 0.38`, dessen build.rs das **unstable**
+`cfg_select!`-Makro nutzt (rust-lang #115585) und damit auf stable rustc 1.94.1
+NICHT baut — der Storage-Subagent lief hier auf. Fix: `rusqlite = "0.31"`
+(bundled → `libsqlite3-sys 0.28`, kein `cfg_select`). Die genutzte API
+(Connection, transaction, execute, query_row) ist zwischen 0.31 und 0.40
+identisch, kein Code-Umbau nötig. Beim Upgrade der Toolchain kann rusqlite
+wieder angehoben werden — dann diesen Pin entfernen.
+
 ## D6 — Workspace-Struktur des Daemons: Bibliotheks-Crates + dünnes Binary
 **Status:** entschieden.
 `daemon/` als Cargo-Workspace: plattformneutrale Logik (storage, blacklist,
