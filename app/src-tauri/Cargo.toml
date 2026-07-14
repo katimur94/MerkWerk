@@ -1,0 +1,25 @@
+[package]
+name = "merkwerk-app"
+version = "0.0.0"
+description = "MerkWerk Tauri shell: Tray, Timeline, Settings"
+edition = "2021"
+rust-version = "1.77.2"
+
+[lib]
+name = "merkwerk_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# "tray-icon" is required to use tauri::tray::TrayIconBuilder — it is not a
+# default Cargo feature of the `tauri` crate.
+tauri = { version = "2", features = ["tray-icon"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# This crate is standalone on purpose (see ARCHITEKTUR.md repo layout /app):
+# it must NOT be swept into the ../../daemon Cargo workspace (which other
+# agents edit concurrently), so it declares its own empty workspace here.
+[workspace]
