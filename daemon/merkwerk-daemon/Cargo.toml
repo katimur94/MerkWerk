@@ -13,7 +13,10 @@ blacklist = { path = "../blacklist" }
 config = { path = "../config" }
 ipc-protocol = { path = "../ipc-protocol" }
 capture-win = { path = "../capture-win" }
+inference = { path = "../inference" }
+distiller = { path = "../distiller" }
 crossbeam-channel = "0.5"
+thiserror = "2"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [

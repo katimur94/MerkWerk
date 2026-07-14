@@ -21,6 +21,8 @@
 #[cfg_attr(not(windows), allow(dead_code))]
 mod control;
 #[cfg_attr(not(windows), allow(dead_code))]
+mod distill_job;
+#[cfg_attr(not(windows), allow(dead_code))]
 mod policy;
 
 #[cfg(windows)]
@@ -59,16 +61,20 @@ fn main() {
         }
     };
 
-    // DB-Pfad: relative Pfade unter das Datenverzeichnis legen.
-    let db_path = if cfg.db_path.is_absolute() {
-        cfg.db_path.clone()
-    } else {
-        dir.join(&cfg.db_path)
+    // DB- und Vault-Pfad: relative Pfade unter das Datenverzeichnis legen.
+    let resolve = |p: &std::path::Path| {
+        if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            dir.join(p)
+        }
     };
+    let db_path = resolve(&cfg.db_path);
+    let vault_path = resolve(&cfg.distill.vault_path);
 
     #[cfg(windows)]
     {
-        if let Err(e) = runtime::run(cfg, config_path.clone(), db_path) {
+        if let Err(e) = runtime::run(cfg, config_path.clone(), db_path, vault_path) {
             eprintln!("[merkwerk-daemon] Laufzeitfehler: {e}");
             std::process::exit(1);
         }
@@ -76,7 +82,7 @@ fn main() {
 
     #[cfg(not(windows))]
     {
-        let _ = (cfg, db_path);
+        let _ = (cfg, db_path, vault_path);
         eprintln!(
             "[merkwerk-daemon] Dieses Binary erfasst nur unter Windows. \
              Auf dieser Plattform ist nichts zu tun (Konfig unter {config_path:?} \

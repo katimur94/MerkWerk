@@ -33,9 +33,12 @@ use capture_win::debounce::Debouncer;
 use capture_win::text_budget::SnapshotConfig;
 use capture_win::{hooks, uia::UiaSnapshotter, window, RawSignal, Snapshot, Trigger};
 use config::Config;
+use distiller::DistillerConfig;
+use inference::OllamaBackend;
 use storage::Store;
 
 use crate::control::Shared;
+use crate::distill_job::{produce_note, PendingNote};
 use crate::ipc_server;
 use crate::policy;
 
@@ -122,6 +125,71 @@ fn build_snap_cfg(cfg: &Config) -> SnapshotConfig {
     }
 }
 
+fn build_distiller_cfg(cfg: &Config) -> DistillerConfig {
+    DistillerConfig {
+        model: cfg.ai.model.clone(),
+        max_snapshots: cfg.distill.max_snapshots,
+        max_chars_per_snapshot: cfg.distill.max_chars_per_snapshot,
+        max_total_context_chars: cfg.distill.max_total_context_chars,
+    }
+}
+
+/// Destillier-Worker: eigene **read-only**-DB-Verbindung + Ollama-Backend. Nimmt
+/// Aufträge `(from_ms, to_ms, created_at)` entgegen, erzeugt Destillat + Vault-
+/// Datei off-thread (der langsame KI-Aufruf blockiert so nie den Erfassungs-Loop)
+/// und schickt die fertige Notiz zum DB-Eintrag an den Loop zurück (der als
+/// einziger Schreiber `insert_note` ausführt, D2).
+///
+/// AI-/Destillier-Konfig (Modell, Endpoint, Budgets) wird beim Start dieses
+/// Threads eingefroren; Änderungen greifen erst nach einem Daemon-Neustart
+/// (ein Config-Reload aktualisiert nur die Erfassungsparameter).
+#[allow(clippy::too_many_arguments)]
+fn distill_worker(
+    db_path: PathBuf,
+    vault_path: PathBuf,
+    endpoint: String,
+    model: String,
+    embed_model: String,
+    cfg: DistillerConfig,
+    rx: Receiver<(i64, i64, i64)>,
+    tx: Sender<PendingNote>,
+) {
+    let store = match Store::open_readonly(&db_path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("[distill] read-only-DB nicht öffenbar, Destillation deaktiviert: {e}");
+            while rx.recv().is_ok() {} // Kanal leeren, damit der Loop nicht blockiert.
+            return;
+        }
+    };
+    let backend = OllamaBackend::new(endpoint, model, embed_model);
+    while let Ok((from_ms, to_ms, created_at)) = rx.recv() {
+        match produce_note(&store, &backend, &cfg, &vault_path, from_ms, to_ms, created_at) {
+            Ok(pending) => {
+                let _ = tx.send(pending);
+            }
+            Err(e) => eprintln!("[distill] fehlgeschlagen: {e}"),
+        }
+    }
+}
+
+/// Trägt eine vom Worker fertiggestellte Notiz in die `notes`-Tabelle ein
+/// (läuft im Erfassungs-Loop — dem einzigen DB-Schreiber).
+fn record_note(store: &Store, pending: PendingNote) {
+    match store.insert_note(
+        &pending.file_path,
+        pending.title.as_deref(),
+        pending.range_start,
+        pending.range_end,
+        pending.created_at,
+        Some(&pending.model),
+        pending.source_snapshot_count,
+    ) {
+        Ok(id) => eprintln!("[distill] Notiz #{id} gespeichert: {}", pending.file_path),
+        Err(e) => eprintln!("[db] insert_note: {e}"),
+    }
+}
+
 /// UIA-Thread: erstellt den Snapshotter (muss auf *diesem* Thread passieren, da
 /// `UiaSnapshotter` `!Send` ist) und bedient Snapshot-Aufträge, bis der Kanal schließt.
 fn uia_thread(rx: Receiver<SnapshotJob>, tx: Sender<SnapshotResult>) {
@@ -152,6 +220,7 @@ pub fn run(
     mut cfg: Config,
     config_path: PathBuf,
     db_path: PathBuf,
+    vault_path: PathBuf,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(parent) = db_path.parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -162,6 +231,7 @@ pub fn run(
     let mut snap_cfg = build_snap_cfg(&cfg);
     let mut ttl_ms = cfg.retention.ttl_days as i64 * 86_400_000;
     let mut purge_interval_ms = cfg.retention.purge_interval_secs as i64 * 1000;
+    let mut auto_distill_ms = cfg.distill.auto_interval_secs as i64 * 1000;
 
     // Retention-Löschjob, einmal sofort beim Start: bereits abgelaufene
     // Altdaten (z. B. aus einer vorherigen Laufzeit) sollen nicht erst eine
@@ -182,13 +252,37 @@ pub fn run(
         });
     }
 
-    // Kanäle: Hooks -> Loop, Loop -> UIA, UIA -> Loop.
+    // Kanäle: Hooks -> Loop, Loop -> UIA, UIA -> Loop, Loop -> Distill, Distill -> Loop.
     let (tx_raw, rx_raw) = unbounded::<RawSignal>();
     let (tx_job, rx_job) = unbounded::<SnapshotJob>();
     let (tx_snap, rx_snap) = unbounded::<SnapshotResult>();
+    let (tx_distill, rx_distill) = unbounded::<(i64, i64, i64)>();
+    let (tx_note, rx_note) = unbounded::<PendingNote>();
 
     // UIA-Thread.
     thread::spawn(move || uia_thread(rx_job, tx_snap));
+
+    // Destillier-Worker-Thread (eigene read-only-DB + Ollama; langsame KI-Aufrufe
+    // laufen hier, nicht im Erfassungs-Loop).
+    {
+        let db_path = db_path.clone();
+        let distiller_cfg = build_distiller_cfg(&cfg);
+        let endpoint = cfg.ai.endpoint.clone();
+        let model = cfg.ai.model.clone();
+        let embed_model = cfg.ai.embed_model.clone();
+        thread::spawn(move || {
+            distill_worker(
+                db_path,
+                vault_path,
+                endpoint,
+                model,
+                embed_model,
+                distiller_cfg,
+                rx_distill,
+                tx_note,
+            )
+        });
+    }
 
     // Hook-Thread (läuft in capture_win). `_hooks` muss am Leben bleiben — sein
     // `Drop` deinstalliert die Hooks und beendet den Hook-Thread.
@@ -196,6 +290,7 @@ pub fn run(
 
     let mut active: Option<Active> = None;
     let mut prev_paused = false;
+    let mut last_auto_distill_ms = now_ms();
     let tick = Duration::from_millis(250);
 
     loop {
@@ -209,9 +304,18 @@ pub fn run(
                     snap_cfg = build_snap_cfg(&cfg);
                     ttl_ms = cfg.retention.ttl_days as i64 * 86_400_000;
                     purge_interval_ms = cfg.retention.purge_interval_secs as i64 * 1000;
+                    // Nur das Auto-Destillier-Intervall wird beim Reload angepasst;
+                    // Modell/Endpoint/Budgets sind im Worker-Thread eingefroren
+                    // (siehe distill_worker) und greifen erst nach Neustart.
+                    auto_distill_ms = cfg.distill.auto_interval_secs as i64 * 1000;
                 }
                 Err(e) => eprintln!("[config] Reload fehlgeschlagen: {e}"),
             }
+        }
+
+        // Manuelle Destillier-Anforderung (IPC `DistillNow`) an den Worker geben.
+        if let Some((from, to)) = shared.take_distill_request() {
+            let _ = tx_distill.send((from, to, now_ms()));
         }
 
         // Pause-Flanke: beim Pausieren die laufende Session sauber beenden.
@@ -239,6 +343,12 @@ pub fn run(
                     handle_snapshot_result(res, &store, &blacklist, &shared, ttl_ms);
                 }
             }
+            recv(rx_note) -> msg => {
+                // Fertiges Destillat vom Worker -> als Notiz eintragen (einziger Schreiber).
+                if let Ok(pending) = msg {
+                    record_note(&store, pending);
+                }
+            }
             default(tick) => {
                 for t in debouncer.tick(now_ms() as u64) {
                     handle_trigger(t, &store, &blacklist, &shared, &tx_job, snap_cfg, ttl_ms, &mut active);
@@ -253,6 +363,13 @@ pub fn run(
                 if now.saturating_sub(last_purge_ms) >= purge_interval_ms {
                     log_purge_result("Purge", store.purge_expired(now));
                     last_purge_ms = now;
+                }
+
+                // Automatische Destillation (falls aktiviert): destilliert das
+                // Intervall seit dem letzten Auto-Lauf. `0` = deaktiviert (nur manuell).
+                if auto_distill_ms > 0 && now.saturating_sub(last_auto_distill_ms) >= auto_distill_ms {
+                    let _ = tx_distill.send((last_auto_distill_ms, now, now));
+                    last_auto_distill_ms = now;
                 }
             }
         }

@@ -5,6 +5,7 @@ members = [
     "config",
     "ipc-protocol",
     "inference",
+    "distiller",
     "capture-win",
     "merkwerk-daemon",
 ]
