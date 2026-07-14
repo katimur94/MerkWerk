@@ -182,6 +182,93 @@ impl Default for RetentionConfig {
     }
 }
 
+/// Lokale KI-Inferenz (siehe ENTSCHEIDUNGEN.md D9). Backend v1 ist Ollama
+/// (`endpoint`), das Textmodell `model` destilliert, `embed_model` erzeugt
+/// Embeddings (Etappe 3).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AiConfig {
+    /// Ollama-HTTP-Endpoint (localhost).
+    #[serde(default = "AiConfig::default_endpoint")]
+    pub endpoint: String,
+    /// Modellname für die Text-Generierung (Destillation).
+    #[serde(default = "AiConfig::default_model")]
+    pub model: String,
+    /// Modellname für Embeddings (semantische Suche, Etappe 3).
+    #[serde(default = "AiConfig::default_embed_model")]
+    pub embed_model: String,
+}
+
+impl AiConfig {
+    fn default_endpoint() -> String {
+        "http://127.0.0.1:11434".to_string()
+    }
+    fn default_model() -> String {
+        "llama3.1".to_string()
+    }
+    fn default_embed_model() -> String {
+        "nomic-embed-text".to_string()
+    }
+}
+
+impl Default for AiConfig {
+    fn default() -> Self {
+        Self {
+            endpoint: Self::default_endpoint(),
+            model: Self::default_model(),
+            embed_model: Self::default_embed_model(),
+        }
+    }
+}
+
+/// Destillation & Notiz-Vault (siehe ENTSCHEIDUNGEN.md D10, ROADMAP.md Etappe 2).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DistillConfig {
+    /// Vault-Verzeichnis für die generierten `.md`-Notizen. Relativer Default;
+    /// der Daemon löst ihn (wie `db_path`) unter `%APPDATA%\MerkWerk` auf.
+    #[serde(default = "DistillConfig::default_vault_path")]
+    pub vault_path: PathBuf,
+    /// Intervall in Sekunden für automatische Destillation (`0` = nur manuell
+    /// via IPC `DistillNow`).
+    #[serde(default)]
+    pub auto_interval_secs: u64,
+    /// Höchstzahl Sessions/Snapshots, die in einen Destillat-Kontext eingehen.
+    #[serde(default = "DistillConfig::default_max_snapshots")]
+    pub max_snapshots: usize,
+    /// Maximale Zeichen je Snapshot-Text im Kontext (char-sicher gekürzt).
+    #[serde(default = "DistillConfig::default_max_chars_per_snapshot")]
+    pub max_chars_per_snapshot: usize,
+    /// Gesamt-Zeichendeckel des an das Modell übergebenen Kontexts.
+    #[serde(default = "DistillConfig::default_max_total_context_chars")]
+    pub max_total_context_chars: usize,
+}
+
+impl DistillConfig {
+    fn default_vault_path() -> PathBuf {
+        PathBuf::from("vault")
+    }
+    const fn default_max_snapshots() -> usize {
+        60
+    }
+    const fn default_max_chars_per_snapshot() -> usize {
+        800
+    }
+    const fn default_max_total_context_chars() -> usize {
+        12000
+    }
+}
+
+impl Default for DistillConfig {
+    fn default() -> Self {
+        Self {
+            vault_path: Self::default_vault_path(),
+            auto_interval_secs: 0,
+            max_snapshots: Self::default_max_snapshots(),
+            max_chars_per_snapshot: Self::default_max_chars_per_snapshot(),
+            max_total_context_chars: Self::default_max_total_context_chars(),
+        }
+    }
+}
+
 /// Wurzel-Konfiguration des MerkWerk-Daemons.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Config {
@@ -205,6 +292,14 @@ pub struct Config {
     /// TTL/Aufbewahrung für Rohdaten.
     #[serde(default)]
     pub retention: RetentionConfig,
+
+    /// Lokale KI-Inferenz (Ollama).
+    #[serde(default)]
+    pub ai: AiConfig,
+
+    /// Destillation & Notiz-Vault.
+    #[serde(default)]
+    pub distill: DistillConfig,
 }
 
 impl Config {
@@ -266,6 +361,8 @@ impl Default for Config {
             debounce: DebounceConfig::default(),
             snapshot: SnapshotConfig::default(),
             retention: RetentionConfig::default(),
+            ai: AiConfig::default(),
+            distill: DistillConfig::default(),
         }
     }
 }
@@ -288,6 +385,12 @@ mod tests {
         // Explizit: das neue Retention-Intervall-Feld nimmt am Round-Trip teil
         // und behält seinen Default (stündlich).
         assert_eq!(loaded.retention.purge_interval_secs, 3600);
+        // AI-/Destillier-Defaults (D9/D10) nehmen ebenfalls teil.
+        assert_eq!(loaded.ai.endpoint, "http://127.0.0.1:11434");
+        assert_eq!(loaded.ai.model, "llama3.1");
+        assert_eq!(loaded.distill.vault_path, PathBuf::from("vault"));
+        assert_eq!(loaded.distill.auto_interval_secs, 0);
+        assert_eq!(loaded.distill.max_total_context_chars, 12000);
     }
 
     #[test]
