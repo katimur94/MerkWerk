@@ -25,6 +25,7 @@ use tauri::{
     Manager, State,
 };
 
+mod notes;
 mod paths;
 mod search;
 mod settings;
@@ -140,6 +141,9 @@ pub fn run() {
             resume_daemon,
             timeline::list_timeline,
             search::search_snapshots,
+            notes::list_notes,
+            notes::get_note_markdown,
+            notes::distill_now,
             settings::get_blacklist,
             settings::set_blacklist,
             settings::get_autostart,

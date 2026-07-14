@@ -20,7 +20,7 @@ mod mock;
 mod ollama;
 
 pub use error::{Error, Result};
-pub use mock::{DEFAULT_EMBEDDING, DEFAULT_RESPONSE, MockInference};
+pub use mock::{MockInference, DEFAULT_EMBEDDING, DEFAULT_RESPONSE};
 pub use ollama::OllamaBackend;
 
 /// Abstraction over a local AI inference backend (`ENTSCHEIDUNGEN.md` D9).

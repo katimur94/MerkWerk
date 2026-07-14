@@ -94,7 +94,10 @@ mod tests {
     #[test]
     fn generate_output_does_not_depend_on_prompt() {
         let mock = MockInference::new();
-        assert_eq!(mock.generate("prompt a").unwrap(), mock.generate("prompt b").unwrap());
+        assert_eq!(
+            mock.generate("prompt a").unwrap(),
+            mock.generate("prompt b").unwrap()
+        );
     }
 
     #[test]

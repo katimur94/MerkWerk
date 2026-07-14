@@ -9,6 +9,7 @@
 //! nur noch Transport, der `handle` aufruft.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::time::Instant;
 
 use ipc_protocol::{Request, Response};
@@ -21,6 +22,10 @@ pub struct Shared {
     /// Anforderung, Konfig + Blacklist neu zu laden (vom IPC-Thread gesetzt,
     /// vom Erfassungs-Loop konsumiert).
     reload_requested: AtomicBool,
+    /// Ausstehende Destillier-Anforderung `(from_ms, to_ms)` (vom IPC-Thread
+    /// gesetzt, vom Erfassungs-Loop konsumiert und an den Destillier-Worker
+    /// weitergereicht). Nur die jeweils jüngste Anforderung bleibt stehen.
+    pending_distill: Mutex<Option<(i64, i64)>>,
     /// Anzahl bislang persistierter Events.
     events_captured: AtomicU64,
     /// Anzahl bislang persistierter Snapshots.
@@ -34,6 +39,7 @@ impl Default for Shared {
         Self {
             paused: AtomicBool::new(false),
             reload_requested: AtomicBool::new(false),
+            pending_distill: Mutex::new(None),
             events_captured: AtomicU64::new(0),
             snapshots_captured: AtomicU64::new(0),
             started: Instant::now(),
@@ -54,6 +60,15 @@ impl Shared {
     /// eine vorlag, und setzt das Flag dabei zurück).
     pub fn take_reload_request(&self) -> bool {
         self.reload_requested.swap(false, Ordering::Relaxed)
+    }
+
+    /// Konsumiert eine ausstehende Destillier-Anforderung `(from_ms, to_ms)`
+    /// (gibt sie zurück und löscht sie dabei). `None`, wenn keine vorliegt.
+    pub fn take_distill_request(&self) -> Option<(i64, i64)> {
+        self.pending_distill
+            .lock()
+            .expect("distill-request mutex poisoned")
+            .take()
     }
 
     pub fn inc_events(&self, n: u64) {
@@ -88,6 +103,13 @@ impl Shared {
                 self.paused.store(false, Ordering::Relaxed);
                 Response::Ok
             }
+            Request::DistillNow { from_ms, to_ms } => {
+                *self
+                    .pending_distill
+                    .lock()
+                    .expect("distill-request mutex poisoned") = Some((from_ms, to_ms));
+                Response::Ok
+            }
             Request::ReloadConfig => {
                 self.reload_requested.store(true, Ordering::Relaxed);
                 Response::Ok
@@ -119,6 +141,22 @@ mod tests {
 
         assert!(matches!(s.handle(Request::Resume), Response::Ok));
         assert!(!s.is_paused());
+    }
+
+    #[test]
+    fn distill_request_is_stashed_by_handle_and_taken_once() {
+        let s = Shared::new();
+        assert_eq!(s.take_distill_request(), None);
+
+        assert!(matches!(
+            s.handle(Request::DistillNow {
+                from_ms: 1_000,
+                to_ms: 2_000
+            }),
+            Response::Ok
+        ));
+        assert_eq!(s.take_distill_request(), Some((1_000, 2_000)));
+        assert_eq!(s.take_distill_request(), None, "second take is cleared");
     }
 
     #[test]
