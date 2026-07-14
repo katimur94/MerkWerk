@@ -38,6 +38,24 @@ Pro Snapshot max. 20 KB sichtbarer Text (`truncated`-Flag bei Überschreitung).
 UIA-TreeWalk mit Tiefen- und Knotenlimit gegen Latenz-Spitzen bei riesigen
 Element-Bäumen. Passwortfeld-Subtrees werden übersprungen.
 
+## D10 — Notizen als Markdown-Vault (Dateien), Metadaten in `notes`-Tabelle
+**Status:** entschieden (Etappe 2).
+Die KI-Destillate werden als `.md`-Dateien in einem Vault-Verzeichnis abgelegt
+(`%APPDATA%\MerkWerk\vault`, konfigurierbar) — direkt Obsidian-kompatibel, das
+ist die Produktidee. Eine Tabelle `notes` (Migration in Etappe 2) hält Metadaten
+(Dateipfad, Quellzeitraum, Erstellzeit, Modell), nicht den Notizinhalt selbst —
+die Datei ist die Quelle der Wahrheit. So bleibt der Vault auch ohne die App
+nutzbar/versionierbar.
+
+## D9 — Lokale Inferenz über Trait, Backend v1 = Ollama
+**Status:** entschieden (Etappe 2), austauschbar.
+Die KI läuft lokal. Wegen „kein Python, kein Docker" (Kickoff) und für einfache,
+robuste Integration ist Backend v1 **Ollama** (eigenständige lokale App, HTTP-API
+auf `127.0.0.1:11434`) — aus Rust nur HTTP+JSON. Gekapselt hinter einem Trait
+`Inference { generate(prompt), embed(text) }`, sodass ein späterer Wechsel auf
+eingebettetes llama.cpp (`llama-cpp-2`) oder Candle nur eine neue Trait-Impl ist,
+ohne Änderung an Destillierer/Embedding-Code. Modellname/Endpoint sind konfigurierbar.
+
 ## D8 — App liest read-only via `PRAGMA query_only`, nicht `SQLITE_OPEN_READ_ONLY`
 **Status:** entschieden.
 Die App (`storage::Store::open_readonly`) öffnet die DB read-**write** (damit die
