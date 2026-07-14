@@ -38,6 +38,16 @@ Pro Snapshot max. 20 KB sichtbarer Text (`truncated`-Flag bei Überschreitung).
 UIA-TreeWalk mit Tiefen- und Knotenlimit gegen Latenz-Spitzen bei riesigen
 Element-Bäumen. Passwortfeld-Subtrees werden übersprungen.
 
+## D11 — Semantische Suche via BLOB-Embeddings + Brute-Force-Cosinus (nicht sqlite-vec)
+**Status:** entschieden (Etappe 3), revidiert Roadmap.
+Die Roadmap nannte `sqlite-vec`. Diese C-Extension muss geladen/gebündelt werden
+und ist über die Linux→Windows-Cross-Compile-Grenze (D4) heikel. Für persönliche
+Datenmengen (einige tausend Notizen) genügt Brute-Force: Embeddings als
+`BLOB` (little-endian f32) in `note_embeddings` speichern und die Cosinus-
+Ähnlichkeit in reinem Rust berechnen — plattformneutral, nativ testbar,
+Millisekunden-schnell. `sqlite-vec` kann später nachgerüstet werden, wenn die
+Datenmenge es erfordert (die Embedding-Spalte bleibt wiederverwendbar).
+
 ## D10 — Notizen als Markdown-Vault (Dateien), Metadaten in `notes`-Tabelle
 **Status:** entschieden (Etappe 2).
 Die KI-Destillate werden als `.md`-Dateien in einem Vault-Verzeichnis abgelegt
