@@ -6,10 +6,22 @@
 use std::path::Path;
 
 use rusqlite::{params, Connection};
+use serde::Serialize;
 
 use crate::error::Result;
 use crate::migrations::migrate;
-use crate::model::{AppSessionRow, EventRow, SnapshotRow};
+use crate::model::{AppSessionRow, EventRow, SearchHit, SnapshotRow};
+
+/// Escape `raw` into a double-quoted FTS5 phrase literal, so arbitrary user
+/// input can never be parsed as FTS5 query syntax (column filters like
+/// `title:foo`, boolean/`NEAR` operators, unbalanced quotes, bare `*`, ...).
+/// A quoted FTS5 string uses SQL-style quote doubling: a literal `"`
+/// becomes `""`. The whole query is then matched as one phrase (its tokens
+/// must appear adjacently, in order) rather than exposed as a boolean query
+/// language — simple and safe for a plain search box.
+fn fts5_phrase(raw: &str) -> String {
+    format!("\"{}\"", raw.replace('"', "\"\""))
+}
 
 /// One row to persist as part of a batch (see [`Store::insert_batch`]).
 ///
@@ -53,6 +65,14 @@ pub enum BatchItem<'a> {
 /// already-current database is opened as-is.
 pub struct Store {
     conn: Connection,
+}
+
+/// Number of rows deleted per table by [`Store::purge_expired`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct PurgeCounts {
+    pub snapshots: usize,
+    pub events: usize,
+    pub sessions: usize,
 }
 
 impl Store {
@@ -324,5 +344,91 @@ impl Store {
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Full-text search over `snapshots` (window title, URL, and visible
+    /// text) via the `snapshots_fts` FTS5 index from migration v2.
+    ///
+    /// `query` is always wrapped as a single literal phrase (see
+    /// [`fts5_phrase`]), so arbitrary user text — including FTS5 syntax
+    /// like `title:foo`, unbalanced quotes, or bare operators — is matched
+    /// literally instead of throwing a query-syntax error. An empty (or
+    /// whitespace-only) query returns no hits without touching the
+    /// database. Hits are ordered by FTS5 relevance (`ORDER BY rank`) and
+    /// capped at `limit`.
+    ///
+    /// `snippet` is always built from `text_content` (the column with the
+    /// actual page/window body text); it's an empty string for a hit that
+    /// matched only in `window_title`/`url` on a snapshot with no text
+    /// content (e.g. a canvas/game window via `FallbackCapture` per
+    /// `ARCHITEKTUR.md`) — `window_title`/`url` are still returned on the
+    /// hit itself in that case.
+    pub fn search(&self, query: &str, limit: i64) -> Result<Vec<SearchHit>> {
+        let trimmed = query.trim();
+        if trimmed.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let phrase = fts5_phrase(trimmed);
+        let mut stmt = self.conn.prepare(
+            // snippet()'s column argument (2 = text_content) is fixed, but
+            // when a hit matches only in window_title/url and
+            // text_content is empty, FTS5's snippet() for that column
+            // returns SQL NULL rather than ''. coalesce() keeps `snippet`
+            // a plain (non-Option) String in all cases.
+            "SELECT s.id, s.session_id, s.ts, s.window_title, s.url,
+                    coalesce(snippet(snapshots_fts, 2, '[', ']', '…', 12), '')
+             FROM snapshots_fts
+             JOIN snapshots s ON s.id = snapshots_fts.rowid
+             WHERE snapshots_fts MATCH ?1
+             ORDER BY rank
+             LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![phrase, limit], |row| {
+            Ok(SearchHit {
+                snapshot_id: row.get(0)?,
+                session_id: row.get(1)?,
+                ts: row.get(2)?,
+                window_title: row.get(3)?,
+                url: row.get(4)?,
+                snippet: row.get(5)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Delete every row whose TTL has passed (`expires_at IS NOT NULL AND
+    /// expires_at < now_ms`) from `snapshots`, `events`, and `app_sessions`,
+    /// in that FK-safe order (children before the `app_sessions` parent
+    /// they reference — `foreign_keys = ON` per [`Store::init_connection`]).
+    ///
+    /// Runs in a single transaction, so a partial failure (e.g. a foreign
+    /// key violation) rolls back all three deletes instead of leaving the
+    /// database half-purged. Deleting from `snapshots` also fires the FTS5
+    /// sync trigger from migration v2, so purged snapshots disappear from
+    /// [`Store::search`] results too — no separate cleanup needed.
+    pub fn purge_expired(&self, now_ms: i64) -> Result<PurgeCounts> {
+        let tx = self.conn.unchecked_transaction()?;
+
+        let snapshots = tx.execute(
+            "DELETE FROM snapshots WHERE expires_at IS NOT NULL AND expires_at < ?1",
+            params![now_ms],
+        )?;
+        let events = tx.execute(
+            "DELETE FROM events WHERE expires_at IS NOT NULL AND expires_at < ?1",
+            params![now_ms],
+        )?;
+        let sessions = tx.execute(
+            "DELETE FROM app_sessions WHERE expires_at IS NOT NULL AND expires_at < ?1",
+            params![now_ms],
+        )?;
+
+        tx.commit()?;
+
+        Ok(PurgeCounts {
+            snapshots,
+            events,
+            sessions,
+        })
     }
 }

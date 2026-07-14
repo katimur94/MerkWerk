@@ -51,3 +51,18 @@ pub struct SnapshotRow {
     pub truncated: bool,
     pub expires_at: Option<i64>,
 }
+
+/// One full-text search hit against the `snapshots_fts` index (migration
+/// v2), returned by [`crate::Store::search`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SearchHit {
+    pub snapshot_id: i64,
+    pub session_id: Option<i64>,
+    /// Unix milliseconds.
+    pub ts: i64,
+    pub window_title: Option<String>,
+    pub url: Option<String>,
+    /// `text_content` excerpt around the match, built by FTS5's `snippet()`
+    /// with `[` `]` markers around matched terms and `…` for elided text.
+    pub snippet: String,
+}

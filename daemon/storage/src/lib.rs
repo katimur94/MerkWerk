@@ -11,8 +11,8 @@ mod model;
 mod store;
 
 pub use error::{Error, Result};
-pub use model::{AppSessionRow, EventRow, SnapshotRow};
-pub use store::{BatchItem, Store};
+pub use model::{AppSessionRow, EventRow, SearchHit, SnapshotRow};
+pub use store::{BatchItem, PurgeCounts, Store};
 
 #[cfg(test)]
 mod tests {
@@ -262,5 +262,325 @@ mod tests {
                 .unwrap()
         };
         assert_eq!(count, 0);
+    }
+
+    // ---- Volltextsuche (FTS5, Migration v2) --------------------------
+
+    #[test]
+    fn search_finds_inserted_snapshot_text_with_snippet() {
+        let (_dir, store) = temp_store();
+        let session_id = store.insert_app_session("chrome.exe", 0, None).unwrap();
+        let snapshot_id = store
+            .insert_snapshot(
+                Some(session_id),
+                None,
+                1_000,
+                Some("Weekly Report — Draft"),
+                Some("https://docs.example.com/report"),
+                Some("the quarterly numbers show a needle in a haystack of data"),
+                false,
+                None,
+            )
+            .unwrap();
+
+        let hits = store.search("needle", 10).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].snapshot_id, snapshot_id);
+        assert_eq!(hits[0].session_id, Some(session_id));
+        assert_eq!(hits[0].ts, 1_000);
+        assert_eq!(
+            hits[0].window_title.as_deref(),
+            Some("Weekly Report — Draft")
+        );
+        assert_eq!(
+            hits[0].url.as_deref(),
+            Some("https://docs.example.com/report")
+        );
+        // snippet() must contain the `[...]` markers around the match.
+        assert!(
+            hits[0].snippet.contains('[') && hits[0].snippet.contains(']'),
+            "snippet should bracket the match: {:?}",
+            hits[0].snippet
+        );
+        assert!(hits[0].snippet.to_lowercase().contains("needle"));
+    }
+
+    #[test]
+    fn search_matches_window_title_and_url_columns_too() {
+        let (_dir, store) = temp_store();
+        store
+            .insert_snapshot(
+                None,
+                None,
+                1,
+                Some("Uniquetitleword"),
+                None,
+                None,
+                false,
+                None,
+            )
+            .unwrap();
+        store
+            .insert_snapshot(
+                None,
+                None,
+                2,
+                None,
+                Some("https://example.com/uniqueurlword"),
+                None,
+                false,
+                None,
+            )
+            .unwrap();
+
+        assert_eq!(store.search("Uniquetitleword", 10).unwrap().len(), 1);
+        assert_eq!(store.search("uniqueurlword", 10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn search_empty_query_returns_empty_without_error() {
+        let (_dir, store) = temp_store();
+        store
+            .insert_snapshot(None, None, 1, None, None, Some("some text"), false, None)
+            .unwrap();
+
+        assert_eq!(store.search("", 10).unwrap(), Vec::new());
+        assert_eq!(store.search("   ", 10).unwrap(), Vec::new());
+    }
+
+    #[test]
+    fn search_special_characters_do_not_error() {
+        let (_dir, store) = temp_store();
+        store
+            .insert_snapshot(
+                None,
+                None,
+                1,
+                None,
+                None,
+                Some("plain text body"),
+                false,
+                None,
+            )
+            .unwrap();
+
+        // FTS5 syntax that would be a parse error (or misinterpreted as a
+        // column filter/operator) if passed through unquoted must instead
+        // be treated as literal phrase text: no error, just 0-or-more hits.
+        for q in [
+            "foo AND \"bar",
+            "a:b",
+            "\"",
+            "\"\"\"",
+            "NEAR(a b)",
+            "col:",
+            "*",
+            "((unbalanced",
+            "text OR OR OR",
+            "-exclude",
+        ] {
+            let result = store.search(q, 10);
+            assert!(result.is_ok(), "query {q:?} must not error: {result:?}");
+        }
+    }
+
+    #[test]
+    fn updating_snapshot_text_updates_fts_index() {
+        let (_dir, mut store) = temp_store();
+        let snapshot_id = store
+            .insert_snapshot(
+                None,
+                None,
+                1,
+                None,
+                None,
+                Some("original alpha content"),
+                false,
+                None,
+            )
+            .unwrap();
+
+        assert_eq!(store.search("alpha", 10).unwrap().len(), 1);
+        assert_eq!(store.search("gamma", 10).unwrap().len(), 0);
+
+        {
+            let tx = store.transaction().unwrap();
+            tx.execute(
+                "UPDATE snapshots SET text_content = 'replaced gamma content' WHERE id = ?1",
+                [snapshot_id],
+            )
+            .unwrap();
+            tx.commit().unwrap();
+        }
+
+        assert_eq!(
+            store.search("alpha", 10).unwrap().len(),
+            0,
+            "stale token must be gone from the index after UPDATE"
+        );
+        let hits = store.search("gamma", 10).unwrap();
+        assert_eq!(hits.len(), 1, "new token must be indexed after UPDATE");
+        assert_eq!(hits[0].snapshot_id, snapshot_id);
+    }
+
+    #[test]
+    fn deleting_snapshot_removes_it_from_search_no_ghost_hit() {
+        let (_dir, mut store) = temp_store();
+        let snapshot_id = store
+            .insert_snapshot(
+                None,
+                None,
+                1,
+                None,
+                None,
+                Some("vanishing token here"),
+                false,
+                None,
+            )
+            .unwrap();
+        assert_eq!(store.search("vanishing", 10).unwrap().len(), 1);
+
+        {
+            let tx = store.transaction().unwrap();
+            tx.execute("DELETE FROM snapshots WHERE id = ?1", [snapshot_id])
+                .unwrap();
+            tx.commit().unwrap();
+        }
+
+        assert_eq!(
+            store.search("vanishing", 10).unwrap().len(),
+            0,
+            "deleted snapshot must not be a ghost hit in search results"
+        );
+    }
+
+    // ---- Retention-Löschjob (purge_expired) ---------------------------
+
+    #[test]
+    fn purge_expired_deletes_only_expired_rows_and_cleans_search() {
+        let (_dir, store) = temp_store();
+        let now_ms = 10_000;
+
+        // An "expired" family: session, event, and snapshot that all
+        // expired before `now_ms` — deletable in FK-safe order.
+        let expired_session = store
+            .insert_app_session("expired.exe", 1, Some(5_000))
+            .unwrap();
+        let expired_event = store
+            .insert_event(
+                Some(expired_session),
+                "focus_change",
+                1,
+                None,
+                None,
+                Some(5_000),
+            )
+            .unwrap();
+        let expired_snapshot = store
+            .insert_snapshot(
+                Some(expired_session),
+                Some(expired_event),
+                1,
+                None,
+                None,
+                Some("expired token findme"),
+                false,
+                Some(5_000),
+            )
+            .unwrap();
+
+        // A "fresh" family: one row never expires (`None`), the other
+        // expires well after `now_ms` — neither should be touched.
+        let fresh_session = store
+            .insert_app_session("fresh.exe", 1, Some(50_000))
+            .unwrap();
+        let fresh_event = store
+            .insert_event(Some(fresh_session), "focus_change", 1, None, None, None)
+            .unwrap();
+        let fresh_snapshot = store
+            .insert_snapshot(
+                Some(fresh_session),
+                Some(fresh_event),
+                1,
+                None,
+                None,
+                Some("fresh token findme"),
+                false,
+                None,
+            )
+            .unwrap();
+
+        // Sanity: both snapshots are searchable before the purge.
+        assert_eq!(store.search("findme", 10).unwrap().len(), 2);
+
+        let counts = store.purge_expired(now_ms).unwrap();
+        assert_eq!(
+            counts,
+            PurgeCounts {
+                snapshots: 1,
+                events: 1,
+                sessions: 1,
+            }
+        );
+
+        // Fresh rows survive intact.
+        let sessions = store.sessions_between(0, 100_000).unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].id, fresh_session);
+
+        let events = store.events_for_session(fresh_session).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].id, fresh_event);
+        assert_eq!(store.events_for_session(expired_session).unwrap().len(), 0);
+
+        let snapshots = store.snapshots_for_session(fresh_session).unwrap();
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0].id, fresh_snapshot);
+        assert_eq!(
+            store.snapshots_for_session(expired_session).unwrap().len(),
+            0
+        );
+
+        // The previously-found expired snapshot is gone from search; the
+        // fresh one is still there (proves the FTS trigger fired on the
+        // purge's DELETE, not just that the row is gone from `snapshots`).
+        let hits = store.search("findme", 10).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].snapshot_id, fresh_snapshot);
+        assert!(store.search("expired", 10).unwrap().is_empty());
+        let _ = expired_snapshot; // id itself no longer resolvable; kept for readability above.
+    }
+
+    #[test]
+    fn purge_expired_is_a_noop_when_nothing_is_expired() {
+        let (_dir, store) = temp_store();
+        let session_id = store.insert_app_session("fresh.exe", 1, None).unwrap();
+        store
+            .insert_event(Some(session_id), "focus_change", 1, None, None, None)
+            .unwrap();
+        store
+            .insert_snapshot(
+                Some(session_id),
+                None,
+                1,
+                None,
+                None,
+                Some("keep me"),
+                false,
+                None,
+            )
+            .unwrap();
+
+        let counts = store.purge_expired(999_999_999).unwrap();
+        assert_eq!(
+            counts,
+            PurgeCounts {
+                snapshots: 0,
+                events: 0,
+                sessions: 0,
+            }
+        );
+        assert_eq!(store.sessions_between(0, 10).unwrap().len(), 1);
+        assert_eq!(store.search("keep", 10).unwrap().len(), 1);
     }
 }

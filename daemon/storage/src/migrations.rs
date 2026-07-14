@@ -57,6 +57,88 @@ CREATE INDEX idx_events_ts        ON events(ts);
 CREATE INDEX idx_snapshots_ts     ON snapshots(ts);
 "#;
 
+/// Schema version 2: a full-text index over `snapshots` (`window_title`,
+/// `url`, `text_content`), per `ARCHITEKTUR.md` ("Anbaubarkeit für später")
+/// and `docs/ROADMAP.md` (Etappe 1, "Volltextsuche (FTS5)").
+///
+/// `snapshots_fts` is an *external content* FTS5 table (`content =
+/// 'snapshots', content_rowid = 'id'`): its shadow tables don't duplicate
+/// the row text, SQLite instead reads it back from `snapshots` — by column
+/// name, not position, so declaring only a subset of `snapshots`' columns
+/// here (in a different position than they appear in `snapshots`) is fine —
+/// whenever `snippet()`/`highlight()` or a plain `SELECT` need it. That
+/// means the *inverted index* itself is not auto-maintained and must be
+/// kept in sync by hand, which is exactly what the three triggers below do
+/// (the standard SQLite "External Content Tables" pattern, see
+/// <https://sqlite.org/fts5.html> §4.4.3, "Keeping An External Content
+/// Table And Its Index In Sync"):
+///   - `AFTER INSERT`: index the new row's text.
+///   - `AFTER DELETE`: the special `('delete', rowid, ...)` form removes
+///     exactly the tokens that were indexed for that row. This needs the
+///     *old* column values as arguments because by the time the trigger
+///     runs the row is already gone from `snapshots`, so FTS5 can no longer
+///     read them back itself.
+///   - `AFTER UPDATE`: delete the old tokens, then insert the new ones.
+///
+/// `window_title`/`url`/`text_content` are all nullable in `snapshots`, but
+/// FTS5 index text should never be NULL, so every trigger coalesces to `''`.
+///
+/// The triggers only cover rows written *after* this migration runs. A
+/// database migrating from v1 may already have `snapshots` rows (per the
+/// migration runner's own contract: "a live database may already be
+/// sitting between two versions"), so the final statement backfills the
+/// index for any pre-existing rows in one pass, using the same coalesce
+/// rule as the triggers.
+const SCHEMA_V2: &str = r#"
+CREATE VIRTUAL TABLE snapshots_fts USING fts5(
+    window_title, url, text_content,
+    content='snapshots', content_rowid='id'
+);
+
+CREATE TRIGGER snapshots_ai AFTER INSERT ON snapshots BEGIN
+  INSERT INTO snapshots_fts(rowid, window_title, url, text_content)
+  VALUES (
+    new.id,
+    coalesce(new.window_title, ''),
+    coalesce(new.url, ''),
+    coalesce(new.text_content, '')
+  );
+END;
+
+CREATE TRIGGER snapshots_ad AFTER DELETE ON snapshots BEGIN
+  INSERT INTO snapshots_fts(snapshots_fts, rowid, window_title, url, text_content)
+  VALUES (
+    'delete',
+    old.id,
+    coalesce(old.window_title, ''),
+    coalesce(old.url, ''),
+    coalesce(old.text_content, '')
+  );
+END;
+
+CREATE TRIGGER snapshots_au AFTER UPDATE ON snapshots BEGIN
+  INSERT INTO snapshots_fts(snapshots_fts, rowid, window_title, url, text_content)
+  VALUES (
+    'delete',
+    old.id,
+    coalesce(old.window_title, ''),
+    coalesce(old.url, ''),
+    coalesce(old.text_content, '')
+  );
+  INSERT INTO snapshots_fts(rowid, window_title, url, text_content)
+  VALUES (
+    new.id,
+    coalesce(new.window_title, ''),
+    coalesce(new.url, ''),
+    coalesce(new.text_content, '')
+  );
+END;
+
+INSERT INTO snapshots_fts(rowid, window_title, url, text_content)
+SELECT id, coalesce(window_title, ''), coalesce(url, ''), coalesce(text_content, '')
+FROM snapshots;
+"#;
+
 struct Migration {
     version: i64,
     up: &'static str,
@@ -64,10 +146,16 @@ struct Migration {
 
 /// Ordered list of schema migrations. Append new versions here — never
 /// mutate or remove an existing entry.
-const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    up: SCHEMA_V1,
-}];
+const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        up: SCHEMA_V1,
+    },
+    Migration {
+        version: 2,
+        up: SCHEMA_V2,
+    },
+];
 
 /// Highest schema version this build of the crate understands.
 fn latest_known_version() -> i64 {
@@ -181,5 +269,91 @@ mod tests {
             }
             other => panic!("expected SchemaTooNew, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn fts5_is_available() {
+        // Bare availability probe, independent of SCHEMA_V2: proves the
+        // bundled SQLite (rusqlite "bundled" feature, pinned to 0.31 /
+        // libsqlite3-sys 0.28 per ENTSCHEIDUNGEN.md D7) was actually
+        // compiled with FTS5 support. If this ever fails, SCHEMA_V2 below
+        // cannot possibly succeed either.
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE VIRTUAL TABLE fts5_probe USING fts5(x);")
+            .expect("FTS5 not available in this SQLite build");
+    }
+
+    #[test]
+    fn migrate_upgrades_v1_db_to_v2() {
+        // Build a v1-only database by hand — i.e. simulate a database that
+        // was created before SCHEMA_V2 existed — with a pre-existing
+        // `snapshots` row, *without* going through `migrate()` (which would
+        // always jump straight to `latest`).
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(SCHEMA_V1).unwrap();
+        conn.execute(
+            "INSERT INTO meta (key, value) VALUES ('schema_version', '1')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO snapshots (ts, window_title, url, text_content)
+             VALUES (1, 'Pre-existing', NULL, 'archaic backfill needle')",
+            [],
+        )
+        .unwrap();
+        assert_eq!(current_version(&conn).unwrap(), 1);
+
+        // snapshots_fts must not exist yet on a v1 database.
+        let fts_exists_before: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master \
+                 WHERE type = 'table' AND name = 'snapshots_fts'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(fts_exists_before, 0);
+
+        // Re-opening (i.e. calling migrate() again, exactly as `Store::open`
+        // does on every open) must lift the DB from v1 to v2.
+        migrate(&mut conn).unwrap();
+        assert_eq!(current_version(&conn).unwrap(), 2);
+        assert_eq!(latest_known_version(), 2);
+
+        for name in [
+            "snapshots_fts",
+            "snapshots_ai",
+            "snapshots_ad",
+            "snapshots_au",
+        ] {
+            let exists: i64 = conn
+                .query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE name = ?1",
+                    params![name],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(exists, 1, "{name} should exist after v1->v2 migration");
+        }
+
+        // The pre-existing row (inserted before v2's triggers existed) was
+        // backfilled into the FTS index by the migration itself.
+        let backfilled: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM snapshots_fts WHERE snapshots_fts MATCH 'backfill'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            backfilled, 1,
+            "pre-existing v1 row must be searchable after the v2 backfill"
+        );
+
+        // A second migrate() call (opening the now-v2 database again) stays
+        // a no-op — must not try to re-create the FTS5 table/triggers.
+        migrate(&mut conn).unwrap();
+        assert_eq!(current_version(&conn).unwrap(), 2);
     }
 }
