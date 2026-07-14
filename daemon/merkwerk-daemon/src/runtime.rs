@@ -173,10 +173,11 @@ fn distill_worker(
     }
 }
 
-/// Trägt eine vom Worker fertiggestellte Notiz in die `notes`-Tabelle ein
-/// (läuft im Erfassungs-Loop — dem einzigen DB-Schreiber).
+/// Trägt eine vom Worker fertiggestellte Notiz in die `notes`-Tabelle ein und
+/// speichert (falls vorhanden) ihr Embedding für die semantische Suche (D11).
+/// Läuft im Erfassungs-Loop — dem einzigen DB-Schreiber (D2).
 fn record_note(store: &Store, pending: PendingNote) {
-    match store.insert_note(
+    let id = match store.insert_note(
         &pending.file_path,
         pending.title.as_deref(),
         pending.range_start,
@@ -185,8 +186,20 @@ fn record_note(store: &Store, pending: PendingNote) {
         Some(&pending.model),
         pending.source_snapshot_count,
     ) {
-        Ok(id) => eprintln!("[distill] Notiz #{id} gespeichert: {}", pending.file_path),
-        Err(e) => eprintln!("[db] insert_note: {e}"),
+        Ok(id) => {
+            eprintln!("[distill] Notiz #{id} gespeichert: {}", pending.file_path);
+            id
+        }
+        Err(e) => {
+            eprintln!("[db] insert_note: {e}");
+            return;
+        }
+    };
+
+    if let Some(vector) = pending.embedding {
+        if let Err(e) = store.upsert_note_embedding(id, &vector) {
+            eprintln!("[db] upsert_note_embedding(#{id}): {e}");
+        }
     }
 }
 

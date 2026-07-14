@@ -13,7 +13,7 @@ use std::path::Path;
 use distiller::DistillerConfig;
 
 /// Fertig geschriebene Notiz, bereit zum Eintrag in die `notes`-Tabelle.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PendingNote {
     pub file_path: String,
     pub title: Option<String>,
@@ -22,6 +22,10 @@ pub struct PendingNote {
     pub created_at: i64,
     pub model: String,
     pub source_snapshot_count: i64,
+    /// Embedding des Notiztexts (für semantische Suche, D11). `None`, wenn das
+    /// Embedding-Modell nicht erreichbar war — die Notiz bleibt trotzdem gültig,
+    /// nur ohne semantischen Index.
+    pub embedding: Option<Vec<f32>>,
 }
 
 /// Fehler der Destillation bzw. des Vault-Schreibens.
@@ -67,6 +71,11 @@ pub fn produce_note(
         source,
     })?;
 
+    // Embedding des Notiztexts für die semantische Suche (D11). Ein Fehler des
+    // Embedding-Modells darf die Notiz nicht scheitern lassen — dann eben ohne
+    // semantischen Index (`None`); der Aufrufer loggt das.
+    let embedding = inference.embed(&note.markdown).ok();
+
     Ok(PendingNote {
         file_path: file.to_string_lossy().into_owned(),
         title: note.title,
@@ -75,6 +84,7 @@ pub fn produce_note(
         created_at,
         model: cfg.model.clone(),
         source_snapshot_count: note.source_snapshot_count as i64,
+        embedding,
     })
 }
 
@@ -120,6 +130,8 @@ mod tests {
         assert_eq!(pending.created_at, 5_555);
         assert_eq!(pending.model, cfg.model);
         assert_eq!(pending.source_snapshot_count, 1);
+        // Das Embedding (für semantische Suche) wurde mitberechnet.
+        assert!(pending.embedding.is_some());
 
         // Die zurückgegebenen Metadaten lassen sich in die notes-Tabelle eintragen.
         let note_id = store
