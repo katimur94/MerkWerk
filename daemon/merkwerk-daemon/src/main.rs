@@ -14,7 +14,13 @@
 //! Hinweis aus und beendet sich — es gibt dort keine Bildschirmaktivität zu
 //! erfassen.
 
+// Auf Nicht-Windows werden `control`/`policy` nur von ihren Unit-Tests benutzt —
+// die Laufzeit-Konsumenten `runtime`/`ipc_server` sind `#[cfg(windows)]`. Dort ist
+// „dead code" also erwartbar; auf dem echten Windows-Target greift weiterhin
+// `clippy -D warnings` und würde echten toten Code melden.
+#[cfg_attr(not(windows), allow(dead_code))]
 mod control;
+#[cfg_attr(not(windows), allow(dead_code))]
 mod policy;
 
 #[cfg(windows)]

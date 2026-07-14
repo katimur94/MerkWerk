@@ -41,6 +41,10 @@ impl Default for SnapshotConfig {
 ///
 /// Gibt zurück, ob durch diesen Aufruf (neu) abgeschnitten wurde bzw. das Budget
 /// bereits vorher voll war.
+///
+/// (Auf Nicht-Windows nur von den Tests benutzt — der Produktionskonsument
+/// `uia.rs` ist `#[cfg(windows)]`; daher dort `allow(dead_code)`.)
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn push_capped(buf: &mut String, add: &str, max_bytes: usize) -> bool {
     if buf.len() >= max_bytes {
         return true;
@@ -63,6 +67,7 @@ pub(crate) fn push_capped(buf: &mut String, add: &str, max_bytes: usize) -> bool
 /// denselben Knoten: `value` wird verworfen, wenn es exakt `name` entspricht
 /// (häufig bei einfachen Controls, deren Legacy-Value die Name-Eigenschaft
 /// spiegelt) — vermeidet den offensichtlichsten Duplikat-Fall an der Quelle.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn dedup_pair(name: Option<String>, value: Option<String>) -> Vec<String> {
     let mut out = Vec::with_capacity(2);
     if let Some(n) = name {
